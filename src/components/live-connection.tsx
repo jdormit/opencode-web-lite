@@ -12,6 +12,7 @@ export function LiveConnection({ connection }: Readonly<{ connection: Connection
     if (connection.state !== 'connected' && connection.state !== 'unavailable') return
     const stream = getGlobalEventStream(connection.server.key)
     let refreshedRecovery = false
+    let reconcileTimer: ReturnType<typeof setTimeout> | undefined
     const unsubscribe = stream.subscribe(() => {
       const next = stream.getSnapshot()
       setState(next)
@@ -25,6 +26,13 @@ export function LiveConnection({ connection }: Readonly<{ connection: Connection
       }
     })
     const unsubscribeReconnect = stream.onReconnect(() => void router.invalidate())
+    const unsubscribeEvents = stream.onEvents(() => {
+      if (reconcileTimer) return
+      reconcileTimer = setTimeout(() => {
+        reconcileTimer = undefined
+        void router.invalidate()
+      }, 500)
+    })
     const onPageHide = () => stream.stop()
     const onPageShow = () => stream.start()
     window.addEventListener('pagehide', onPageHide)
@@ -34,6 +42,8 @@ export function LiveConnection({ connection }: Readonly<{ connection: Connection
     return () => {
       unsubscribe()
       unsubscribeReconnect()
+      unsubscribeEvents()
+      if (reconcileTimer) clearTimeout(reconcileTimer)
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('pageshow', onPageShow)
       stream.stop()

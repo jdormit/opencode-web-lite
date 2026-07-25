@@ -1,6 +1,8 @@
 import { createFileRoute, notFound } from '@tanstack/react-router'
 
 import { getSessionSnapshot } from '~/functions/session-snapshot'
+import { getComposerOptions } from '~/functions/composer-options'
+import { SessionComposer } from '~/components/session-composer'
 import { strings } from '~/lib/strings'
 
 const safeIdentifier = /^[A-Za-z0-9_-]{1,128}$/
@@ -19,17 +21,20 @@ export const Route = createFileRoute('/server/$serverKey/session/$sessionId')({
       data: { serverKey: params.serverKey, sessionID: params.sessionId },
     })
     if (!snapshot) throw notFound()
-    return snapshot
+    const composer = await getComposerOptions({ data: { directory: snapshot.directory } }).catch(
+      () => ({ agents: [], models: [] }),
+    )
+    return { snapshot, composer }
   },
   head: ({ loaderData, params }) => ({
-    meta: [{ title: `${loaderData?.title ?? params.sessionId} | ${strings.productName}` }],
+    meta: [{ title: `${loaderData?.snapshot.title ?? params.sessionId} | ${strings.productName}` }],
   }),
   component: Session,
 })
 
 function Session() {
   const { serverKey, sessionId } = Route.useParams()
-  const snapshot = Route.useLoaderData()
+  const { composer, snapshot } = Route.useLoaderData()
 
   return (
     <main id="main-content" className="session-shell">
@@ -65,6 +70,13 @@ function Session() {
           </article>
         ))}
       </section>
+      <SessionComposer
+        key={`${serverKey}:${sessionId}`}
+        serverKey={serverKey}
+        sessionID={sessionId}
+        options={composer}
+        busy={snapshot.busy}
+      />
       <footer className="session-identity">
         <span>{serverKey}</span><span>{sessionId}</span>
       </footer>

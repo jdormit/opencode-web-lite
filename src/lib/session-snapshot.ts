@@ -17,4 +17,5 @@ export type SessionSnapshot = {
   directory: string
   items: SessionTimelineItem[]
   hasOlder: boolean
+  busy: boolean
 }

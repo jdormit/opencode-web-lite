@@ -165,6 +165,12 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .message-error { font-weight: 650; }
 .part-status { color: var(--muted); font-size: 0.85rem; }
 .session-identity { display: flex; flex-wrap: wrap; gap: 1rem; padding-top: 1rem; color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.composer { position: sticky; bottom: 0; display: grid; gap: 0.75rem; padding: 1rem 0 max(1rem, env(safe-area-inset-bottom)); background: var(--canvas); border-top: 1px solid var(--line); }
+.composer textarea { width: 100%; resize: vertical; max-height: 40dvh; padding: 0.9rem; border: 1px solid var(--line); border-radius: 0.25rem; background: var(--surface); color: var(--ink); font: inherit; line-height: 1.5; }
+.composer-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.composer-controls select { min-height: 44px; max-width: 14rem; padding: 0 0.5rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.optimistic-message { padding: 0.75rem; border-left: 3px solid var(--accent); background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sr-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .centered-state { min-height: calc(100dvh - 4.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
 .centered-state > p:not(.eyebrow) { color: var(--muted); }
 .error-details { max-width: 100%; overflow: auto; margin-top: 2rem; padding: 1rem; border: 1px solid var(--line); }

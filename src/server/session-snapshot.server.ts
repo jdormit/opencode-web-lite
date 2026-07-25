@@ -1,4 +1,4 @@
-import type { Message, Part, Session } from '@opencode-ai/sdk/v2/client'
+import type { Message, Part, Session, SessionStatus } from '@opencode-ai/sdk/v2/client'
 
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import {
@@ -20,6 +20,10 @@ type SessionClient = {
       data: Array<{ info: Message; parts: Part[] }> | undefined
       response?: Response
     }>
+    status?(
+      parameters: { directory: string },
+      options?: { signal?: AbortSignal },
+    ): Promise<{ data: Record<string, SessionStatus> | undefined }>
   }
 }
 
@@ -41,10 +45,13 @@ export async function loadSessionSnapshot(
   }
 
   const session = sessionResult.data
-  const messageResult = await client.session.messages(
-    { sessionID, directory: session.directory, limit: 21 },
-    { signal },
-  )
+  const [messageResult, statusResult] = await Promise.all([
+    client.session.messages(
+      { sessionID, directory: session.directory, limit: 21 },
+      { signal },
+    ),
+    client.session.status?.({ directory: session.directory }, { signal }),
+  ])
   if (!messageResult.data) throw new Error('Session messages could not be loaded')
   const messages = messageResult.data
   const visible = messages.slice(-20)
@@ -54,6 +61,7 @@ export async function loadSessionSnapshot(
     title: bounded(session.title, 500),
     directory: bounded(session.directory, 2_000),
     hasOlder: messages.length > visible.length,
+    busy: statusResult?.data?.[session.id]?.type === 'busy',
     items: visible.map(({ info, parts }) => ({
       id: info.id,
       role: info.role,
