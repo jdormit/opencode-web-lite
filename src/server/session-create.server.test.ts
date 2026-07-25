@@ -29,7 +29,14 @@ describe('createSession', () => {
   test('revalidates the project and creates a scoped session', async () => {
     let parameters: unknown
     const result = await createSession(
-      { directory: '/work/alpha', title: ' Fix tests ' },
+      {
+        directory: '/work/alpha',
+        title: ' Fix tests ',
+        agent: 'build',
+        providerID: 'provider',
+        modelID: 'model',
+        variant: '',
+      },
       connection,
       {
         project: { list: async () => ({ data: [project] }) },
@@ -40,15 +47,26 @@ describe('createSession', () => {
           },
         },
       },
+      {
+        agents: [{ name: 'build' }],
+        models: [{ providerID: 'provider', providerName: 'Provider', modelID: 'model', name: 'Model', variants: [] }],
+      },
     )
 
-    expect(parameters).toEqual({ directory: '/work/alpha', title: 'Fix tests' })
+    expect(parameters).toEqual({
+      directory: '/work/alpha',
+      title: 'Fix tests',
+      agent: 'build',
+      model: { id: 'model', providerID: 'provider' },
+    })
     expect(result).toEqual({ serverKey: 'server_test', sessionID: 'ses_new' })
   })
 
   test('rejects directories not returned by the server', async () => {
     expect(
-      createSession({ directory: '/tmp/other', title: '' }, connection, {
+      createSession({
+        directory: '/tmp/other', title: '', agent: 'build', providerID: 'provider', modelID: 'model', variant: '',
+      }, connection, {
         project: { list: async () => ({ data: [project] }) },
         session: { create: async () => ({ data: session }) },
       }),

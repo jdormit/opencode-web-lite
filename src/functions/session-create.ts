@@ -9,11 +9,21 @@ export const createSessionMutation = createServerFn({ method: 'POST' })
       data === null ||
       !('directory' in data) ||
       typeof data.directory !== 'string' ||
-      !('title' in data) ||
-      typeof data.title !== 'string'
+      !('title' in data) || typeof data.title !== 'string' ||
+      !('agent' in data) || typeof data.agent !== 'string' ||
+      !('providerID' in data) || typeof data.providerID !== 'string' ||
+      !('modelID' in data) || typeof data.modelID !== 'string' ||
+      !('variant' in data) || typeof data.variant !== 'string'
     ) {
       throw new Error('Invalid session input')
     }
-    return { directory: data.directory, title: data.title }
+    return {
+      directory: data.directory,
+      title: data.title,
+      agent: data.agent,
+      providerID: data.providerID,
+      modelID: data.modelID,
+      variant: data.variant,
+    }
   })
   .handler(({ data }) => createSession(data))

@@ -52,6 +52,7 @@ export function createSdkForConnection(
   options: Readonly<{
     fetch?: typeof globalThis.fetch
     throwOnError?: boolean
+    directory?: string
   }> = {},
 ) {
   return createOpencodeClient({

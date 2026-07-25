@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { PageIntro } from '~/components/page-intro'
 import { getHomeIndex } from '~/functions/home-index'
+import { getComposerOptions } from '~/functions/composer-options'
 import { createSessionMutation } from '~/functions/session-create'
 import { strings } from '~/lib/strings'
 
@@ -11,13 +12,18 @@ export const Route = createFileRoute('/new')({
   loader: async () => {
     try {
       const index = await getHomeIndex()
+      const firstDirectory = index.projects[0]?.directory
+      const composer = firstDirectory
+        ? await getComposerOptions({ data: { directory: firstDirectory } })
+        : undefined
       return {
         projects: index.projects,
         limited: index.projectsLimited,
         error: index.errors.projects,
+        composer,
       }
     } catch {
-      return { projects: [], limited: false, error: true }
+      return { projects: [], limited: false, error: true, composer: undefined }
     }
   },
   head: () => ({ meta: [{ title: `New session | ${strings.productName}` }] }),
@@ -25,8 +31,9 @@ export const Route = createFileRoute('/new')({
 })
 
 function NewSession() {
-  const { error: loadError, limited, projects } = Route.useLoaderData()
+  const { composer: initialComposer, error: loadError, limited, projects } = Route.useLoaderData()
   const createSession = useServerFn(createSessionMutation)
+  const loadComposer = useServerFn(getComposerOptions)
   const navigate = useNavigate()
   const router = useRouter()
   const [error, setError] = useState('')
@@ -34,6 +41,14 @@ function NewSession() {
   const [directory, setDirectory] = useState(projects[0]?.directory ?? '')
   const [title, setTitle] = useState('')
   const [created, setCreated] = useState<{ serverKey: string; sessionID: string }>()
+  const [composer, setComposer] = useState(initialComposer)
+  const [agent, setAgent] = useState(initialComposer?.defaultAgent ?? '')
+  const [modelKey, setModelKey] = useState(
+    initialComposer?.defaultModel
+      ? `${initialComposer.defaultModel.providerID}\0${initialComposer.defaultModel.modelID}`
+      : '',
+  )
+  const [variant, setVariant] = useState('')
   const submitting = useRef(false)
 
   useEffect(() => {
@@ -45,7 +60,7 @@ function NewSession() {
           'directory' in saved &&
           typeof saved.directory === 'string' &&
           projects.some((project) => project.directory === saved.directory)
-        ) setDirectory(saved.directory)
+        ) void selectDirectory(saved.directory)
       }
     } catch {}
   }, [projects])
@@ -59,6 +74,28 @@ function NewSession() {
     } catch {}
   }
 
+  async function selectDirectory(nextDirectory: string) {
+    setDirectory(nextDirectory)
+    saveDraft(nextDirectory, title)
+    setError('')
+    try {
+      const next = await loadComposer({ data: { directory: nextDirectory } })
+      setComposer(next)
+      setAgent(next.defaultAgent ?? '')
+      setModelKey(
+        next.defaultModel
+          ? `${next.defaultModel.providerID}\0${next.defaultModel.modelID}`
+          : '',
+      )
+      setVariant('')
+    } catch {
+      setComposer(undefined)
+      setAgent('')
+      setModelKey('')
+      setError('Agents and models could not be loaded for this project.')
+    }
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (submitting.current) return
@@ -66,10 +103,15 @@ function NewSession() {
     setError('')
     setCreated(undefined)
     setPending(true)
+    const [providerID = '', modelID = ''] = modelKey.split('\0')
     void createSession({
       data: {
         directory,
         title,
+        agent,
+        providerID,
+        modelID,
+        variant,
       },
     })
       .then(async (result) => {
@@ -104,15 +146,44 @@ function NewSession() {
         <form className="new-session-form" onSubmit={submit}>
           <label>
             <span>Project</span>
-            <select name="directory" required value={directory} onChange={(event) => {
-              setDirectory(event.target.value)
-              saveDraft(event.target.value, title)
-            }}>
+            <select name="directory" required value={directory} onChange={(event) => void selectDirectory(event.target.value)}>
               {projects.map((project) => (
                 <option key={project.id} value={project.directory}>{project.name}</option>
               ))}
             </select>
           </label>
+          <label>
+            <span>Agent</span>
+            <select value={agent} required onChange={(event) => setAgent(event.target.value)} disabled={!composer?.agents.length}>
+              {composer?.agents.map((option) => (
+                <option key={option.name} value={option.name}>{option.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Model</span>
+            <select value={modelKey} required onChange={(event) => {
+              setModelKey(event.target.value)
+              setVariant('')
+            }} disabled={!composer?.models.length}>
+              {composer?.models.map((model) => (
+                <option key={`${model.providerID}/${model.modelID}`} value={`${model.providerID}\0${model.modelID}`}>
+                  {model.providerName} · {model.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {composer?.models.find((model) => `${model.providerID}\0${model.modelID}` === modelKey)?.variants.length ? (
+            <label>
+              <span>Variant <small>Optional</small></span>
+              <select value={variant} onChange={(event) => setVariant(event.target.value)}>
+                <option value="">Default</option>
+                {composer.models
+                  .find((model) => `${model.providerID}\0${model.modelID}` === modelKey)
+                  ?.variants.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+          ) : null}
           <label>
             <span>Session title <small>Optional</small></span>
             <input name="title" maxLength={200} autoComplete="off" value={title} onChange={(event) => {
@@ -125,7 +196,7 @@ function NewSession() {
           {created ? (
             <a href={`/server/${created.serverKey}/session/${created.sessionID}`}>Open the created session</a>
           ) : null}
-          <button type="submit" disabled={pending}>
+          <button type="submit" disabled={pending || !agent || !modelKey}>
             {pending ? 'Creating session...' : 'Create session'}
           </button>
         </form>
