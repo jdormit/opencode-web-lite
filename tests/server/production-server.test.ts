@@ -5,16 +5,19 @@ import { startProductionServer } from '../../server'
 let server: Awaited<ReturnType<typeof startProductionServer>>
 let upstream: ReturnType<typeof Bun.serve>
 let origin: string
+let terminalTokenAuthorized = false
+let terminalSocketAuthorized = false
+let terminalTicketConsumed = false
 const previousNodeEnv = process.env.NODE_ENV
 const previousServerUrl = process.env.OPENCODE_SERVER_URL
 const previousServerPassword = process.env.OPENCODE_SERVER_PASSWORD
 
 beforeAll(async () => {
   process.env.NODE_ENV = 'production'
-  upstream = Bun.serve({
+  upstream = Bun.serve<{ kind: 'pty' }>({
     hostname: '127.0.0.1',
     port: 0,
-    fetch(request) {
+    fetch(request, server) {
       const url = new URL(request.url)
       if (url.pathname === '/global/health') {
         return Response.json({
@@ -22,7 +25,38 @@ beforeAll(async () => {
           version: request.headers.get('authorization') ? 'authenticated' : 'missing-auth',
         })
       }
+      if (request.method === 'POST' && url.pathname === '/pty/pty_test/connect-token') {
+        terminalTokenAuthorized =
+          request.headers.get('authorization')?.startsWith('Basic ') === true &&
+          request.headers.get('x-opencode-ticket') === '1' &&
+          url.searchParams.get('workspace') === 'workspace_test'
+        if (!terminalTokenAuthorized) return new Response('Forbidden', { status: 403 })
+        terminalTicketConsumed = false
+        return Response.json({ ticket: 'one-use-ticket', expires_in: 30 })
+      }
+      if (url.pathname === '/pty/pty_test/connect') {
+        terminalSocketAuthorized =
+          url.searchParams.get('ticket') === 'one-use-ticket' &&
+          url.searchParams.get('workspace') === 'workspace_test' &&
+          request.headers.get('origin') === url.origin &&
+          request.headers.get('authorization')?.startsWith('Basic ') === true
+        if (!terminalSocketAuthorized || terminalTicketConsumed) {
+          return new Response('Forbidden', { status: 403 })
+        }
+        terminalTicketConsumed = true
+        return server.upgrade(request, { data: { kind: 'pty' } })
+          ? undefined
+          : new Response('Upgrade failed', { status: 400 })
+      }
       return new Response('Not found', { status: 404 })
+    },
+    websocket: {
+      open(socket) {
+        socket.send('terminal-ready')
+      },
+      message(socket, message) {
+        socket.send(`echo:${String(message)}`)
+      },
     },
   })
   process.env.OPENCODE_SERVER_URL = `http://127.0.0.1:${upstream.port}`
@@ -116,6 +150,66 @@ describe('production Bun host', () => {
     })
 
     expect(message).toBe('upgrade-ok')
+  })
+
+  test('bridges a ticket-authenticated terminal WebSocket', async () => {
+    const tokenResponse = await fetch(
+      `${origin}/api/opencode/pty/pty_test/connect-token?workspace=workspace_test`,
+      {
+        method: 'POST',
+        headers: { Origin: origin, 'x-opencode-ticket': '1' },
+      },
+    )
+    expect(tokenResponse.status).toBe(200)
+    const token = await tokenResponse.json() as { ticket: string; expires_in: number }
+    expect(token).toEqual({ ticket: 'one-use-ticket', expires_in: 30 })
+
+    const messages = await new Promise<string[]>((resolve, reject) => {
+      const WebSocketWithHeaders = WebSocket as unknown as new (
+        url: string,
+        init: { headers: Record<string, string> },
+      ) => WebSocket
+      const socket = new WebSocketWithHeaders(
+        origin.replace('http:', 'ws:') +
+          `/api/opencode/pty/pty_test/connect?workspace=workspace_test&ticket=${token.ticket}`,
+        { headers: { Origin: origin } },
+      )
+      const received: string[] = []
+      const timeout = setTimeout(() => reject(new Error('Terminal bridge timed out')), 2_000)
+      socket.addEventListener('message', (event) => {
+        received.push(String(event.data))
+        if (received.length === 1) socket.send('pwd')
+        if (received.length === 2) socket.close(1000, 'Test complete')
+      })
+      socket.addEventListener('close', () => {
+        clearTimeout(timeout)
+        resolve(received)
+      })
+      socket.addEventListener('error', () => {
+        clearTimeout(timeout)
+        reject(new Error('Terminal bridge failed'))
+      })
+    })
+
+    expect(messages).toEqual(['terminal-ready', 'echo:pwd'])
+    expect(terminalTokenAuthorized).toBe(true)
+    expect(terminalSocketAuthorized).toBe(true)
+  })
+
+  test('rejects terminal WebSockets without the same-origin header', async () => {
+    const response = await fetch(
+      `${origin}/api/opencode/pty/pty_test/connect?ticket=one-use-ticket`,
+      { headers: { Upgrade: 'websocket' } },
+    )
+    expect(response.status).toBe(403)
+  })
+
+  test('rejects ambiguous terminal upgrade queries', async () => {
+    const response = await fetch(
+      `${origin}/api/opencode/pty/pty_test/connect?ticket=one&ticket=two`,
+      { headers: { Origin: origin, Upgrade: 'websocket' } },
+    )
+    expect(response.status).toBe(400)
   })
 
   test('does not expose source maps', async () => {

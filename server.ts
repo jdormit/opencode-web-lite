@@ -1,6 +1,8 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { getDefaultConnection } from './src/server/connections.server'
+
 type StartHandler = {
   fetch(request: Request): Response | Promise<Response>
 }
@@ -14,7 +16,18 @@ type HostOptions = Readonly<{
   log?: boolean
 }>
 
-type SocketData = { kind: 'upgrade-probe' }
+type SocketData =
+  | { kind: 'upgrade-probe' }
+  | {
+      kind: 'pty-proxy'
+      upstreamUrl: string
+      upstreamOrigin: string
+      authorization?: string
+      upstream?: WebSocket
+      pending: Array<string | ArrayBuffer>
+      pendingBytes: number
+      connectTimer?: ReturnType<typeof setTimeout>
+    }
 
 type Asset = {
   file: Bun.BunFile
@@ -24,6 +37,10 @@ type Asset = {
 const defaultClientDirectory = './dist/client'
 const defaultServerEntryPoint = './dist/server/server.js'
 const websocketProbePath = '/__foundation/websocket'
+const ptyConnectPath = /^\/api\/opencode\/pty\/([A-Za-z0-9_-]{1,128})\/connect$/
+const maximumPendingPtyBytes = 64 * 1024
+const maximumPtyFrameBytes = 64 * 1024
+const maximumPtyBackpressureBytes = 1024 * 1024
 
 export async function startProductionServer(options: HostOptions = {}) {
   const hostname = options.hostname ?? '127.0.0.1'
@@ -64,6 +81,14 @@ export async function startProductionServer(options: HostOptions = {}) {
           : new Response('WebSocket upgrade failed', { status: 400 })
       }
 
+      if (url.pathname.startsWith('/api/opencode/pty/') && url.pathname.endsWith('/connect')) {
+        const upgrade = preparePtyUpgrade(request)
+        if (upgrade instanceof Response) return upgrade
+        return bunServer.upgrade(request, { data: upgrade })
+          ? undefined
+          : new Response('WebSocket upgrade failed', { status: 400 })
+      }
+
       const asset = assets.get(url.pathname)
       if (asset && (request.method === 'GET' || request.method === 'HEAD')) {
         return serveAsset(request, asset)
@@ -73,11 +98,41 @@ export async function startProductionServer(options: HostOptions = {}) {
     },
     websocket: {
       open(socket) {
-        if (socket.data.kind !== 'upgrade-probe') return
-        socket.send('upgrade-ok')
-        socket.close(1000, 'Probe complete')
+        if (socket.data.kind === 'upgrade-probe') {
+          socket.send('upgrade-ok')
+          socket.close(1000, 'Probe complete')
+          return
+        }
+        connectUpstreamPty(socket)
       },
-      message() {},
+      message(socket, message) {
+        if (socket.data.kind !== 'pty-proxy') return
+        const value = typeof message === 'string' ? message : Uint8Array.from(message).buffer
+        const size = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength
+        if (socket.data.upstream?.readyState === WebSocket.OPEN) {
+          if (socket.data.upstream.bufferedAmount + size > maximumPtyBackpressureBytes) {
+            socket.data.upstream.close(1013, 'Terminal input backpressure exceeded')
+            socket.close(1013, 'Terminal input backpressure exceeded')
+            return
+          }
+          socket.data.upstream.send(value)
+          return
+        }
+        if (socket.data.pendingBytes + size > maximumPendingPtyBytes) {
+          socket.close(1009, 'Terminal input buffer exceeded')
+          return
+        }
+        socket.data.pending.push(value)
+        socket.data.pendingBytes += size
+      },
+      close(socket) {
+        if (socket.data.kind !== 'pty-proxy') return
+        if (socket.data.connectTimer) clearTimeout(socket.data.connectTimer)
+        socket.data.upstream?.close(1000, 'Browser disconnected')
+      },
+      maxPayloadLength: maximumPtyFrameBytes,
+      backpressureLimit: maximumPtyBackpressureBytes,
+      closeOnBackpressureLimit: true,
     },
   })
 
@@ -86,6 +141,102 @@ export async function startProductionServer(options: HostOptions = {}) {
   }
 
   return server
+}
+
+function preparePtyUpgrade(request: Request): Extract<SocketData, { kind: 'pty-proxy' }> | Response {
+  if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+    return new Response('WebSocket upgrade required', { status: 426 })
+  }
+  const requestUrl = new URL(request.url)
+  if (request.headers.get('origin') !== requestUrl.origin) {
+    return new Response('Cross-origin WebSocket rejected', { status: 403 })
+  }
+  const match = requestUrl.pathname.match(ptyConnectPath)
+  if (!match) return new Response('Invalid terminal path', { status: 404 })
+  if ([...requestUrl.searchParams.keys()].some((key) => !['cursor', 'directory', 'ticket', 'workspace'].includes(key))) {
+    return new Response('Invalid terminal query', { status: 400 })
+  }
+  for (const key of ['cursor', 'directory', 'ticket', 'workspace']) {
+    if (requestUrl.searchParams.getAll(key).length > 1) {
+      return new Response('Invalid terminal query', { status: 400 })
+    }
+  }
+  const ticket = requestUrl.searchParams.get('ticket')
+  const directory = requestUrl.searchParams.get('directory')
+  const workspace = requestUrl.searchParams.get('workspace')
+  const cursor = requestUrl.searchParams.get('cursor')
+  if (!ticket || ticket.length > 4_096 || (directory?.length ?? 0) > 2_000 || (workspace?.length ?? 0) > 256) {
+    return new Response('Invalid terminal query', { status: 400 })
+  }
+  if (cursor !== null && (!/^-?\d+$/.test(cursor) || !Number.isSafeInteger(Number(cursor)) || Number(cursor) < -1)) {
+    return new Response('Invalid terminal cursor', { status: 400 })
+  }
+
+  let connection
+  try {
+    connection = getDefaultConnection()
+  } catch {
+    return new Response('Invalid OpenCode server configuration', { status: 503 })
+  }
+  const upstreamUrl = new URL(`/pty/${encodeURIComponent(match[1]!)}/connect`, connection.url)
+  upstreamUrl.protocol = upstreamUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  upstreamUrl.searchParams.set('ticket', ticket)
+  if (directory) upstreamUrl.searchParams.set('directory', directory)
+  if (workspace) upstreamUrl.searchParams.set('workspace', workspace)
+  if (cursor !== null) upstreamUrl.searchParams.set('cursor', cursor)
+  const authorization = connection.password === undefined
+    ? undefined
+    : `Basic ${Buffer.from(`${connection.username ?? 'opencode'}:${connection.password}`).toString('base64')}`
+  return {
+    kind: 'pty-proxy',
+    upstreamUrl: upstreamUrl.href,
+    upstreamOrigin: connection.url,
+    ...(authorization ? { authorization } : {}),
+    pending: [],
+    pendingBytes: 0,
+  }
+}
+
+function connectUpstreamPty(socket: Bun.ServerWebSocket<SocketData>) {
+  if (socket.data.kind !== 'pty-proxy') return
+  const headers: Record<string, string> = { Origin: socket.data.upstreamOrigin }
+  if (socket.data.authorization) headers.Authorization = socket.data.authorization
+  const WebSocketWithHeaders = WebSocket as unknown as new (
+    url: string,
+    init: { headers: Record<string, string> },
+  ) => WebSocket
+  const upstream = new WebSocketWithHeaders(socket.data.upstreamUrl, { headers })
+  upstream.binaryType = 'arraybuffer'
+  socket.data.upstream = upstream
+  socket.data.connectTimer = setTimeout(() => {
+    upstream.close()
+    socket.close(1013, 'OpenCode terminal connection timed out')
+  }, 5_000)
+  upstream.addEventListener('open', () => {
+    if (socket.data.kind !== 'pty-proxy') return
+    if (socket.data.connectTimer) clearTimeout(socket.data.connectTimer)
+    delete socket.data.connectTimer
+    for (const message of socket.data.pending) upstream.send(message)
+    socket.data.pending = []
+    socket.data.pendingBytes = 0
+  })
+  upstream.addEventListener('message', (event) => {
+    const value = event.data
+    if (typeof value !== 'string' && !(value instanceof ArrayBuffer)) return
+    if (socket.send(value) === 0) {
+      upstream.close(1013, 'Terminal output backpressure exceeded')
+      socket.close(1013, 'Terminal output backpressure exceeded')
+    }
+  })
+  upstream.addEventListener('close', (event) => {
+    const code = event.code === 1000 || (event.code >= 3000 && event.code <= 4999) ? event.code : 1011
+    socket.close(code, boundedCloseReason(event.reason || 'OpenCode terminal disconnected'))
+  })
+  upstream.addEventListener('error', () => socket.close(1011, 'OpenCode terminal unavailable'))
+}
+
+function boundedCloseReason(reason: string): string {
+  return Buffer.from(reason).subarray(0, 120).toString().replaceAll('\uFFFD', '')
 }
 
 function assertLoopbackHost(hostname: string) {
