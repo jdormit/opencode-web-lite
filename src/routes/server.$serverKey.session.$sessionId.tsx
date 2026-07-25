@@ -3,6 +3,7 @@ import { createFileRoute, notFound } from '@tanstack/react-router'
 import { getSessionSnapshot } from '~/functions/session-snapshot'
 import { getComposerOptions } from '~/functions/composer-options'
 import { SessionComposer } from '~/components/session-composer'
+import { SessionRequests } from '~/components/session-requests'
 import { strings } from '~/lib/strings'
 
 const safeIdentifier = /^[A-Za-z0-9_-]{1,128}$/
@@ -70,12 +71,21 @@ function Session() {
           </article>
         ))}
       </section>
+      <SessionRequests
+        key={`requests:${snapshot.permission?.id ?? ''}:${snapshot.question?.id ?? ''}`}
+        serverKey={serverKey}
+        directory={snapshot.directory}
+        permission={snapshot.permission}
+        question={snapshot.question}
+        unavailable={snapshot.requestsUnavailable}
+      />
       <SessionComposer
         key={`${serverKey}:${sessionId}`}
         serverKey={serverKey}
         sessionID={sessionId}
         options={composer}
         busy={snapshot.busy}
+        blocked={Boolean(snapshot.permission || snapshot.question || snapshot.requestsUnavailable)}
       />
       <footer className="session-identity">
         <span>{serverKey}</span><span>{sessionId}</span>

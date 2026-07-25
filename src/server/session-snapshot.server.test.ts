@@ -54,10 +54,21 @@ describe('loadSessionSnapshot', () => {
     const snapshot = await loadSessionSnapshot('server_test', 'ses_1', connection, {
       session: {
         get: async () => ({ data: session }),
+        children: async () => ({
+          data: [{ ...session, id: 'ses_child', parentID: 'ses_1' }],
+        }),
         messages: async (parameters) => {
           messageParameters = parameters
           return { data: [{ info, parts: [part] }] }
         },
+      },
+      permission: {
+        list: async () => ({
+          data: [{
+            id: 'per_1', sessionID: 'ses_child', permission: 'edit', patterns: ['file'],
+            always: ['file'], metadata: {},
+          }],
+        }),
       },
     })
 
@@ -69,6 +80,7 @@ describe('loadSessionSnapshot', () => {
     expect(snapshot?.items[0]?.parts).toEqual([
       { id: 'part_1', type: 'text', text: 'Please fix it' },
     ])
+    expect(snapshot?.permission?.sessionID).toBe('ses_child')
   })
 
   test('distinguishes missing sessions from upstream failures', async () => {

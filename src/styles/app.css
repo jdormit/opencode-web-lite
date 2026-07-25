@@ -171,6 +171,16 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .composer-controls select { min-height: 44px; max-width: 14rem; padding: 0 0.5rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 .optimistic-message { padding: 0.75rem; border-left: 3px solid var(--accent); background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.request-dock { display: grid; gap: 1.5rem; margin-top: 1rem; padding: 1.25rem; border: 2px solid var(--accent); background: var(--surface); }
+.request-dock h2 { margin: 0; }
+.request-dock ul { padding-left: 1.25rem; overflow-wrap: anywhere; }
+.request-dock fieldset { display: grid; gap: 0.75rem; margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); }
+.request-dock legend span, .request-dock label span, .request-dock label small { display: block; }
+.request-dock label { display: flex; gap: 0.75rem; align-items: flex-start; }
+.request-dock fieldset > label { min-height: 44px; padding: 0.4rem 0; }
+.request-dock label small { color: var(--muted); }
+.request-dock input[type='text'] { width: 100%; min-height: 44px; padding: 0.5rem; border: 1px solid var(--line); background: var(--canvas); color: var(--ink); }
+.always-scope { margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); }
 .centered-state { min-height: calc(100dvh - 4.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
 .centered-state > p:not(.eyebrow) { color: var(--muted); }
 .error-details { max-width: 100%; overflow: auto; margin-top: 2rem; padding: 1rem; border: 1px solid var(--line); }

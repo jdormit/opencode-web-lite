@@ -1,4 +1,4 @@
-import type { Message, Part, Session, SessionStatus } from '@opencode-ai/sdk/v2/client'
+import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus } from '@opencode-ai/sdk/v2/client'
 
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import {
@@ -24,7 +24,13 @@ type SessionClient = {
       parameters: { directory: string },
       options?: { signal?: AbortSignal },
     ): Promise<{ data: Record<string, SessionStatus> | undefined }>
+    children?(
+      parameters: { sessionID: string; directory: string },
+      options?: { signal?: AbortSignal },
+    ): Promise<{ data: Session[] | undefined }>
   }
+  permission?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: PermissionRequest[] | undefined }> }
+  question?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: QuestionRequest[] | undefined }> }
 }
 
 export async function loadSessionSnapshot(
@@ -45,16 +51,47 @@ export async function loadSessionSnapshot(
   }
 
   const session = sessionResult.data
-  const [messageResult, statusResult] = await Promise.all([
+  const [messageResult, statusResult, childResult, permissionResult, questionResult] = await Promise.all([
     client.session.messages(
       { sessionID, directory: session.directory, limit: 21 },
       { signal },
     ),
     client.session.status?.({ directory: session.directory }, { signal }),
+    client.session.children?.({ sessionID: session.id, directory: session.directory }, { signal }).catch(() => undefined),
+    client.permission
+      ? client.permission.list({ directory: session.directory }, { signal })
+          .then((value) => ({ value, failed: value.data === undefined }))
+          .catch(() => ({ value: undefined, failed: true }))
+      : undefined,
+    client.question
+      ? client.question.list({ directory: session.directory }, { signal })
+          .then((value) => ({ value, failed: value.data === undefined }))
+          .catch(() => ({ value: undefined, failed: true }))
+      : undefined,
   ])
   if (!messageResult.data) throw new Error('Session messages could not be loaded')
   const messages = messageResult.data
   const visible = messages.slice(-20)
+  const sessionCache = new Map(
+    [session, ...(childResult?.data ?? []).slice(0, 50)].map((item) => [item.id, item]),
+  )
+  const permission = await findLineageRequest(
+    permissionResult?.value?.data,
+    session,
+    client,
+    sessionCache,
+    signal,
+  )
+  const question = await findLineageRequest(
+    questionResult?.value?.data,
+    session,
+    client,
+    sessionCache,
+    signal,
+  )
+  const lineageLimited =
+    (permissionResult?.value?.data?.length ?? 0) > 100 ||
+    (questionResult?.value?.data?.length ?? 0) > 100
 
   return {
     id: session.id,
@@ -62,6 +99,12 @@ export async function loadSessionSnapshot(
     directory: bounded(session.directory, 2_000),
     hasOlder: messages.length > visible.length,
     busy: statusResult?.data?.[session.id]?.type === 'busy',
+    requestsUnavailable:
+      permissionResult?.failed === true ||
+      questionResult?.failed === true ||
+      lineageLimited,
+    ...projectPermission(permission),
+    ...projectQuestion(question),
     items: visible.map(({ info, parts }) => ({
       id: info.id,
       role: info.role,
@@ -72,6 +115,80 @@ export async function loadSessionSnapshot(
         : {}),
       parts: parts.flatMap((part) => projectPart(part)),
     })),
+  }
+}
+
+async function findLineageRequest<T extends { sessionID: string }>(
+  requests: T[] | undefined,
+  root: Session,
+  client: SessionClient,
+  cache: Map<string, Session>,
+  signal: AbortSignal,
+): Promise<T | undefined> {
+  for (const request of (requests ?? []).slice(0, 100)) {
+    let sessionID: string | undefined = request.sessionID
+    for (let depth = 0; sessionID && depth < 20; depth += 1) {
+      if (sessionID === root.id) return request
+      let current = cache.get(sessionID)
+      if (!current) {
+        const result = await client.session.get({ sessionID }, { signal })
+        current = result.data
+        if (!current) break
+        cache.set(current.id, current)
+      }
+      sessionID = current.parentID
+    }
+  }
+  return undefined
+}
+
+function projectPermission(request: PermissionRequest | undefined) {
+  if (!request) return {}
+  const complete =
+    request.patterns.length <= 100 &&
+    request.always.length <= 100 &&
+    [...request.patterns, ...request.always].every((pattern) => pattern.length <= 2_000)
+  return {
+    permission: {
+      id: bounded(request.id, 200),
+      sessionID: bounded(request.sessionID, 200),
+      permission: bounded(request.permission, 500),
+      patterns: request.patterns.slice(0, 100).map((pattern) => bounded(pattern, 2_000)),
+      always: request.always.slice(0, 100).map((pattern) => bounded(pattern, 2_000)),
+      complete,
+    },
+  }
+}
+
+function projectQuestion(request: QuestionRequest | undefined) {
+  if (!request) return {}
+  const complete =
+    request.questions.length <= 20 &&
+    request.questions.every(
+      (question) =>
+        question.question.length <= 2_000 &&
+        question.header.length <= 100 &&
+        question.options.length <= 50 &&
+        question.options.every(
+          (option) => option.label.length <= 200 && option.description.length <= 1_000,
+        ),
+    )
+  return {
+    question: {
+      id: bounded(request.id, 200),
+      sessionID: bounded(request.sessionID, 200),
+      questions: request.questions.slice(0, 20).map((question) => ({
+        header: bounded(question.header, 100),
+        question: bounded(question.question, 2_000),
+        multiple: question.multiple === true,
+        custom: question.custom !== false,
+        options: question.options.slice(0, 50).map((option) => ({
+          label: bounded(option.label, 200),
+          description: bounded(option.description, 1_000),
+        })),
+      })),
+      complete,
+    },
   }
 }
 

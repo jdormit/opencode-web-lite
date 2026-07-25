@@ -10,9 +10,10 @@ type Props = Readonly<{
   sessionID: string
   options: ComposerOptions
   busy: boolean
+  blocked: boolean
 }>
 
-export function SessionComposer({ serverKey, sessionID, options, busy }: Props) {
+export function SessionComposer({ serverKey, sessionID, options, busy, blocked }: Props) {
   const sendPrompt = useServerFn(sendPromptMutation)
   const stopSession = useServerFn(stopSessionMutation)
   const router = useRouter()
@@ -137,6 +138,7 @@ export function SessionComposer({ serverKey, sessionID, options, busy }: Props) 
       {!options.agents.length || !options.models.length ? (
         <p className="form-error" role="alert">No selectable agent or connected model is available.</p>
       ) : null}
+      {blocked ? <p className="form-error" role="status">Answer the pending request before sending another prompt.</p> : null}
       {state === 'sending' && submittedText ? (
         <div className="optimistic-message" aria-label="Sending prompt">{submittedText}</div>
       ) : null}
@@ -148,15 +150,16 @@ export function SessionComposer({ serverKey, sessionID, options, busy }: Props) 
         placeholder="Ask OpenCode..."
         maxLength={100_000}
         rows={4}
+        disabled={blocked}
       />
       <div className="composer-controls">
-        <select aria-label="Agent" value={agent} onChange={(event) => {
+        <select disabled={blocked} aria-label="Agent" value={agent} onChange={(event) => {
           setAgent(event.target.value)
           selectionChanged()
         }}>
           {options.agents.map((option) => <option key={option.name}>{option.name}</option>)}
         </select>
-        <select aria-label="Model" value={modelKey} onChange={(event) => {
+        <select disabled={blocked} aria-label="Model" value={modelKey} onChange={(event) => {
           setModelKey(event.target.value)
           setVariant('')
           selectionChanged()
@@ -168,7 +171,7 @@ export function SessionComposer({ serverKey, sessionID, options, busy }: Props) 
           ))}
         </select>
         {selectedModel?.variants.length ? (
-          <select aria-label="Variant" value={variant} onChange={(event) => {
+          <select disabled={blocked} aria-label="Variant" value={variant} onChange={(event) => {
             setVariant(event.target.value)
             selectionChanged()
           }}>
@@ -176,7 +179,7 @@ export function SessionComposer({ serverKey, sessionID, options, busy }: Props) 
             {selectedModel.variants.map((name) => <option key={name}>{name}</option>)}
           </select>
         ) : null}
-        <button type="button" disabled={state === 'sending' || state === 'stopping' || !text.trim() || !agent || !modelKey} onClick={() => void submit()}>
+        <button type="button" disabled={blocked || state === 'sending' || state === 'stopping' || !text.trim() || !agent || !modelKey} onClick={() => void submit()}>
           {state === 'sending' ? 'Sending...' : busy ? 'Steer' : 'Send'}
         </button>
         {busy || state === 'sending' || state === 'stopping' ? (

@@ -18,4 +18,25 @@ export type SessionSnapshot = {
   items: SessionTimelineItem[]
   hasOlder: boolean
   busy: boolean
+  permission?: {
+    id: string
+    sessionID: string
+    permission: string
+    patterns: string[]
+    always: string[]
+    complete: boolean
+  }
+  question?: {
+    id: string
+    sessionID: string
+    questions: Array<{
+      header: string
+      question: string
+      options: Array<{ label: string; description: string }>
+      multiple: boolean
+      custom: boolean
+    }>
+    complete: boolean
+  }
+  requestsUnavailable: boolean
 }
