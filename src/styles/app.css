@@ -113,6 +113,7 @@ h1 { max-width: 17ch; margin: 0; font-size: clamp(2.35rem, 7vw, 6.3rem); font-we
 .connection-panel > p, .settings-list p, .placeholder-surface p { color: var(--muted); line-height: 1.55; }
 .status-line { display: flex; align-items: center; gap: 0.6rem; color: var(--muted); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .status-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #a1a195; }
+.status-dot.is-connected { background: #25834a; }
 .connection-panel dl, .identity-list { margin: 2rem 0 0; border-top: 1px solid var(--line); }
 .connection-panel dl div, .identity-list div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.85rem 0; border-bottom: 1px solid var(--line); }
 dt { color: var(--muted); }

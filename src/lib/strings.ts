@@ -11,6 +11,20 @@ export const strings = {
     description:
       'Connect to an OpenCode server to continue recent sessions or start something new.',
     connectionPending: 'Connection setup is the next implementation step.',
+    connection: {
+      connected: 'Connected',
+      'authentication-failed': 'Authentication failed',
+      incompatible: 'Incompatible server',
+      'invalid-configuration': 'Invalid server configuration',
+      unavailable: 'Server unavailable',
+    },
+    connectionDescription: {
+      connected: 'The OpenCode server is ready.',
+      'authentication-failed': 'Update the configured username or password, then retry.',
+      incompatible: 'This address does not provide the supported OpenCode v1 API.',
+      'invalid-configuration': 'Set OPENCODE_SERVER_URL to a plain HTTP or HTTPS origin.',
+      unavailable: 'Check that OpenCode is running and this server address is correct.',
+    },
   },
   newSession: {
     eyebrow: 'New session',

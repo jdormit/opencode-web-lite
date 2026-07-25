@@ -14,6 +14,7 @@
     "check": "bun run typecheck && bun run test && bun run build && bun test tests/server"
   },
   "dependencies": {
+    "@opencode-ai/sdk": "1.18.4",
     "@tanstack/react-router": "1.170.18",
     "@tanstack/react-start": "1.168.32",
     "react": "19.2.8",
