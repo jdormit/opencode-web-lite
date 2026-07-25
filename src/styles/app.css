@@ -8,6 +8,7 @@
   --accent: #a9361c;
   --accent-ink: #fffaf5;
   --focus: #166cf0;
+  --danger: #a9361c;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--canvas);
   color: var(--ink);
@@ -22,6 +23,7 @@
   --accent: #ff6b3f;
   --accent-ink: #17100d;
   --focus: #8bb8ff;
+  --danger: #ff8061;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +36,7 @@
     --accent: #ff6b3f;
     --accent-ink: #17100d;
     --focus: #8bb8ff;
+    --danger: #ff8061;
   }
 }
 
@@ -138,6 +141,12 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .settings-list article { padding: 1.5rem 0; border-bottom: 1px solid var(--line); }
 .settings-list h2 { margin: 0; }
 .settings-list .eyebrow { margin-bottom: 0.5rem; }
+.new-session-form { display: grid; gap: 1.25rem; max-width: 40rem; margin-top: 3rem; }
+.new-session-form label { display: grid; gap: 0.5rem; font-weight: 650; }
+.new-session-form small { color: var(--muted); font-weight: 450; }
+.new-session-form select, .new-session-form input { width: 100%; min-height: 48px; padding: 0.7rem; border: 1px solid var(--line); border-radius: 0.25rem; background: var(--surface); color: var(--ink); font: inherit; }
+.new-session-form button { width: fit-content; }
+.form-error, .message-error { color: var(--danger); }
 .identity-list { max-width: 45rem; }
 .session-shell { max-width: 62rem; margin: 0 auto; }
 .session-header { padding-bottom: 2rem; border-bottom: 1px solid var(--line); }
@@ -153,7 +162,7 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .tool-summary { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--line); }
 .tool-summary > * { min-width: 0; overflow-wrap: anywhere; }
 .tool-summary span { color: var(--muted); text-transform: capitalize; }
-.message-error { color: #a9361c; font-weight: 650; }
+.message-error { font-weight: 650; }
 .part-status { color: var(--muted); font-size: 0.85rem; }
 .session-identity { display: flex; flex-wrap: wrap; gap: 1rem; padding-top: 1rem; color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.75rem; }
 .centered-state { min-height: calc(100dvh - 4.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
