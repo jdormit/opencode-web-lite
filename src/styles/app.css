@@ -139,6 +139,23 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .settings-list h2 { margin: 0; }
 .settings-list .eyebrow { margin-bottom: 0.5rem; }
 .identity-list { max-width: 45rem; }
+.session-shell { max-width: 62rem; margin: 0 auto; }
+.session-header { padding-bottom: 2rem; border-bottom: 1px solid var(--line); }
+.session-header h1 { max-width: 100%; font-size: clamp(2rem, 6vw, 4rem); overflow-wrap: anywhere; }
+.session-header > p:last-child, .history-note { color: var(--muted); overflow-wrap: anywhere; }
+.timeline { display: grid; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+.timeline > .history-note, .timeline > .empty-copy { margin: 0; padding: 1rem; background: var(--surface); }
+.message { padding: 1.5rem; background: var(--canvas); }
+.message-assistant { background: var(--surface); }
+.message header { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); }
+.message h2 { margin: 0; color: var(--ink); font-size: 0.85rem; }
+.message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.tool-summary { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--line); }
+.tool-summary > * { min-width: 0; overflow-wrap: anywhere; }
+.tool-summary span { color: var(--muted); text-transform: capitalize; }
+.message-error { color: #a9361c; font-weight: 650; }
+.part-status { color: var(--muted); font-size: 0.85rem; }
+.session-identity { display: flex; flex-wrap: wrap; gap: 1rem; padding-top: 1rem; color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.75rem; }
 .centered-state { min-height: calc(100dvh - 4.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
 .centered-state > p:not(.eyebrow) { color: var(--muted); }
 .error-details { max-width: 100%; overflow: auto; margin-top: 2rem; padding: 1rem; border: 1px solid var(--line); }

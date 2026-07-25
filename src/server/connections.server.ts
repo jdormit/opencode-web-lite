@@ -47,11 +47,18 @@ export function getDefaultConnection(
   }
 }
 
-export function createSdkForConnection(connection: ServerConnection) {
+export function createSdkForConnection(
+  connection: ServerConnection,
+  options: Readonly<{
+    fetch?: typeof globalThis.fetch
+    throwOnError?: boolean
+  }> = {},
+) {
   return createOpencodeClient({
     baseUrl: connection.url,
     headers: authorizationHeaders(connection),
-    throwOnError: true,
+    ...options,
+    throwOnError: options.throwOnError ?? true,
   })
 }
 
