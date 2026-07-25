@@ -1,4 +1,4 @@
-import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus } from '@opencode-ai/sdk/v2/client'
+import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, Todo } from '@opencode-ai/sdk/v2/client'
 
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import {
@@ -28,6 +28,7 @@ type SessionClient = {
       parameters: { sessionID: string; directory: string },
       options?: { signal?: AbortSignal },
     ): Promise<{ data: Session[] | undefined }>
+    todo?(parameters: { sessionID: string; directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: Todo[] | undefined }>
   }
   permission?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: PermissionRequest[] | undefined }> }
   question?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: QuestionRequest[] | undefined }> }
@@ -51,13 +52,18 @@ export async function loadSessionSnapshot(
   }
 
   const session = sessionResult.data
-  const [messageResult, statusResult, childResult, permissionResult, questionResult] = await Promise.all([
+  const [messageResult, statusResult, childResult, todoResult, permissionResult, questionResult] = await Promise.all([
     client.session.messages(
       { sessionID, directory: session.directory, limit: 21 },
       { signal },
     ),
     client.session.status?.({ directory: session.directory }, { signal }),
     client.session.children?.({ sessionID: session.id, directory: session.directory }, { signal }).catch(() => undefined),
+    client.session.todo
+      ? client.session.todo({ sessionID: session.id, directory: session.directory }, { signal })
+          .then((value) => ({ value, failed: value.data === undefined }))
+          .catch(() => ({ value: undefined, failed: true }))
+      : undefined,
     client.permission
       ? client.permission.list({ directory: session.directory }, { signal })
           .then((value) => ({ value, failed: value.data === undefined }))
@@ -72,6 +78,10 @@ export async function loadSessionSnapshot(
   if (!messageResult.data) throw new Error('Session messages could not be loaded')
   const messages = messageResult.data
   const visible = messages.slice(-20)
+  const currentTurnSummary = [...messages].reverse().find(({ info }) => info.role === 'user')?.info.summary
+  const currentTurnDiffs = currentTurnSummary && typeof currentTurnSummary === 'object'
+    ? currentTurnSummary.diffs
+    : []
   const sessionCache = new Map(
     [session, ...(childResult?.data ?? []).slice(0, 50)].map((item) => [item.id, item]),
   )
@@ -103,6 +113,24 @@ export async function loadSessionSnapshot(
       permissionResult?.failed === true ||
       questionResult?.failed === true ||
       lineageLimited,
+    todos: (todoResult?.value?.data ?? []).slice(0, 20).map((todo) => ({
+      content: bounded(todo.content, 2_000),
+      status: bounded(todo.status, 100),
+      priority: bounded(todo.priority, 100),
+    })),
+    todosLimited: (todoResult?.value?.data?.length ?? 0) > 20,
+    todosUnavailable: todoResult?.failed === true,
+    changes: currentTurnDiffs.filter((diff) => Boolean(diff.file)).slice(0, 40).map((diff, index) => ({
+      file: bounded(diff.file!, 2_000),
+      status: diff.status ?? 'modified',
+      additions: Number.isFinite(diff.additions) ? diff.additions : 0,
+      deletions: Number.isFinite(diff.deletions) ? diff.deletions : 0,
+      ...(diff.patch && index < 5 ? { patch: bounded(diff.patch, 8_000) } : {}),
+      patchLimited: index < 5 && (diff.patch?.length ?? 0) > 8_000,
+      patchOmitted: Boolean(diff.patch) && index >= 5,
+    })),
+    changesLimited: currentTurnDiffs.filter((diff) => Boolean(diff.file)).length > 40,
+    changesTotal: currentTurnDiffs.filter((diff) => Boolean(diff.file)).length,
     ...projectPermission(permission),
     ...projectQuestion(question),
     items: visible.map(({ info, parts }) => ({

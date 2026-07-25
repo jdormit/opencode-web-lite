@@ -43,6 +43,7 @@ describe('loadSessionSnapshot', () => {
       time: { created: 1 },
       agent: 'build',
       model: { providerID: 'provider', modelID: 'model' },
+      summary: { diffs: [{ file: 'src/app.ts', additions: 2, deletions: 1, status: 'modified', patch: '@@ changed' }] },
     } satisfies Message
     const part = {
       id: 'part_1',
@@ -61,6 +62,9 @@ describe('loadSessionSnapshot', () => {
           messageParameters = parameters
           return { data: [{ info, parts: [part] }] }
         },
+        todo: async () => ({
+          data: [{ content: 'Verify the fix', status: 'pending', priority: 'high' }],
+        }),
       },
       permission: {
         list: async () => ({
@@ -81,6 +85,13 @@ describe('loadSessionSnapshot', () => {
       { id: 'part_1', type: 'text', text: 'Please fix it' },
     ])
     expect(snapshot?.permission?.sessionID).toBe('ses_child')
+    expect(snapshot?.todos).toEqual([
+      { content: 'Verify the fix', status: 'pending', priority: 'high' },
+    ])
+    expect(snapshot?.changes).toEqual([{
+      file: 'src/app.ts', status: 'modified', additions: 2, deletions: 1,
+      patch: '@@ changed', patchLimited: false, patchOmitted: false,
+    }])
   })
 
   test('distinguishes missing sessions from upstream failures', async () => {

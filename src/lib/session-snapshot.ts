@@ -39,4 +39,18 @@ export type SessionSnapshot = {
     complete: boolean
   }
   requestsUnavailable: boolean
+  todos: Array<{ content: string; status: string; priority: string }>
+  todosLimited: boolean
+  todosUnavailable: boolean
+  changes: Array<{
+    file: string
+    status: string
+    additions: number
+    deletions: number
+    patch?: string
+    patchLimited: boolean
+    patchOmitted: boolean
+  }>
+  changesLimited: boolean
+  changesTotal: number
 }
