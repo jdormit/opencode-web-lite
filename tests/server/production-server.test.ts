@@ -3,11 +3,30 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { startProductionServer } from '../../server'
 
 let server: Awaited<ReturnType<typeof startProductionServer>>
+let upstream: ReturnType<typeof Bun.serve>
 let origin: string
 const previousNodeEnv = process.env.NODE_ENV
+const previousServerUrl = process.env.OPENCODE_SERVER_URL
+const previousServerPassword = process.env.OPENCODE_SERVER_PASSWORD
 
 beforeAll(async () => {
   process.env.NODE_ENV = 'production'
+  upstream = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url)
+      if (url.pathname === '/global/health') {
+        return Response.json({
+          healthy: true,
+          version: request.headers.get('authorization') ? 'authenticated' : 'missing-auth',
+        })
+      }
+      return new Response('Not found', { status: 404 })
+    },
+  })
+  process.env.OPENCODE_SERVER_URL = `http://127.0.0.1:${upstream.port}`
+  process.env.OPENCODE_SERVER_PASSWORD = 'server-secret'
   server = await startProductionServer({
     port: 0,
     enableWebSocketProbe: true,
@@ -18,8 +37,13 @@ beforeAll(async () => {
 
 afterAll(() => {
   void server.stop(true)
+  void upstream.stop(true)
   if (previousNodeEnv === undefined) delete process.env.NODE_ENV
   else process.env.NODE_ENV = previousNodeEnv
+  if (previousServerUrl === undefined) delete process.env.OPENCODE_SERVER_URL
+  else process.env.OPENCODE_SERVER_URL = previousServerUrl
+  if (previousServerPassword === undefined) delete process.env.OPENCODE_SERVER_PASSWORD
+  else process.env.OPENCODE_SERVER_PASSWORD = previousServerPassword
 })
 
 describe('production Bun host', () => {
@@ -102,6 +126,18 @@ describe('production Bun host', () => {
   test('rejects unexpected request authorities', async () => {
     const response = await fetch(origin, { headers: { Host: 'attacker.example' } })
     expect(response.status).toBe(421)
+  })
+
+  test('proxies an allowlisted OpenCode route with server credentials', async () => {
+    const response = await fetch(`${origin}/api/opencode/global/health`, {
+      headers: { Authorization: 'Bearer browser-secret' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      healthy: true,
+      version: 'authenticated',
+    })
   })
 })
 

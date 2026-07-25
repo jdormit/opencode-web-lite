@@ -45,6 +45,9 @@ export async function startProductionServer(options: HostOptions = {}) {
       if (!hasExpectedAuthority(url, hostname, bunServer.port)) {
         return new Response('Misdirected request', { status: 421 })
       }
+      if (url.pathname.startsWith('/api/opencode/')) {
+        bunServer.timeout(request, 0)
+      }
 
       if (
         options.enableWebSocketProbe === true &&

@@ -6,7 +6,7 @@ import type {
   PublicServerConnection,
 } from '~/lib/connection'
 
-type ServerConnection = PublicServerConnection & {
+export type ServerConnection = PublicServerConnection & {
   username?: string
   password?: string
 }
