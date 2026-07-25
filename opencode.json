@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "references": {
+    "opencode": {
+      "path": "~/opencode",
+      "description": "Official OpenCode source. Use it to verify client behavior, API contracts, and feature-parity details."
+    }
+  },
+  "permission": {
+    "external_directory": {
+      "~/opencode/**": "allow"
+    },
+    "read": {
+      "~/opencode/**": "allow"
+    },
+    "edit": {
+      "~/opencode/**": "deny"
+    }
+  }
+}
