@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 
 import { getSessionSnapshot } from '~/functions/session-snapshot'
 import { getComposerOptions } from '~/functions/composer-options'
@@ -9,10 +9,11 @@ import { strings } from '~/lib/strings'
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 
 const safeIdentifier = /^[A-Za-z0-9_-]{1,128}$/
+const SessionTerminal = lazy(() => import('~/components/session-terminal').then((module) => ({ default: module.SessionTerminal })))
 
 export const Route = createFileRoute('/server/$serverKey/session/$sessionId')({
-  validateSearch: (search: Record<string, unknown>): { view?: 'changes' } =>
-    search.view === 'changes' ? { view: 'changes' } : {},
+  validateSearch: (search: Record<string, unknown>): { view?: 'changes' | 'terminal' } =>
+    search.view === 'changes' || search.view === 'terminal' ? { view: search.view } : {},
   beforeLoad: ({ params }) => {
     if (
       !safeIdentifier.test(params.serverKey) ||
@@ -54,6 +55,7 @@ function Session() {
         <Link to="." search={{ view: 'changes' }} aria-current={view === 'changes' ? 'page' : undefined}>
           Changes {snapshot.changesTotal ? `(${snapshot.changesTotal})` : ''}
         </Link>
+        <Link to="." search={{ view: 'terminal' }} aria-current={view === 'terminal' ? 'page' : undefined}>Terminal</Link>
       </nav>
       <SessionRequests
         key={`requests:${snapshot.permission?.id ?? ''}:${snapshot.question?.id ?? ''}`}
@@ -101,7 +103,7 @@ function Session() {
         busy={snapshot.busy}
         blocked={Boolean(snapshot.permission || snapshot.question || snapshot.requestsUnavailable)}
       />
-      </> : (
+      </> : view === 'changes' ? (
         <section className="changes-view" aria-labelledby="changes-heading">
           <h2 id="changes-heading">Changed files</h2>
           {snapshot.changesLimited ? <p className="history-note">Showing the first 40 changed files.</p> : null}
@@ -116,7 +118,7 @@ function Session() {
             </details>
           ))}
         </section>
-      )}
+      ) : <Suspense fallback={<p>Loading terminal...</p>}><SessionTerminal serverKey={serverKey} directory={snapshot.directory} /></Suspense>}
       <footer className="session-identity">
         <span>{serverKey}</span><span>{sessionId}</span>
       </footer>

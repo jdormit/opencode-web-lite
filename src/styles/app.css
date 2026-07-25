@@ -195,6 +195,28 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .changes-view summary { display: flex; justify-content: space-between; gap: 1rem; min-height: 48px; padding: 0.75rem 0; cursor: pointer; overflow-wrap: anywhere; }
 .changes-view summary span { color: var(--muted); white-space: nowrap; }
 .changes-view pre { max-height: 65dvh; overflow: auto; padding: 1rem; background: var(--surface); font-size: 0.8rem; white-space: pre; }
+.terminal-panel { min-height: 240px; max-height: min(720px, 65dvh); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); background: #10120f; color: #e7eadf; }
+.terminal-toolbar, .terminal-tabs, .terminal-tab, .terminal-tab form, .terminal-error { display: flex; align-items: center; gap: 0.5rem; }
+.terminal-toolbar { padding: 0.5rem; border-bottom: 1px solid #34382f; }
+.terminal-toolbar h2 { margin: 0 auto 0 0; font-size: 1rem; }
+.terminal-toolbar label { display: flex; align-items: center; gap: 0.5rem; }
+.terminal-toolbar select, .terminal-tab input { min-height: 44px; background: #10120f; color: inherit; border: 1px solid #34382f; }
+.terminal-tabs { margin: 0; padding: 0.25rem; list-style: none; overflow-x: auto; border-bottom: 1px solid #34382f; }
+.terminal-tab { flex: 0 0 auto; }
+.terminal-tab button { min-height: 44px; padding: 0.4rem 0.6rem; border-color: #34382f; color: inherit; }
+.terminal-tab button[aria-pressed='true'] { border-color: #cfff67; color: #cfff67; }
+.terminal-tab label span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.terminal-error { margin: 0; justify-content: space-between; padding: 0.5rem; background: #401b1b; }
+.terminal-error button { min-height: 44px; border-color: #d98d8d; color: inherit; }
+.terminal-stage { flex: 1 1 auto; position: relative; min-height: 0; overflow: hidden; }
+.terminal-instance { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.terminal-state { flex: 0 0 auto; margin: 0; padding: 0.25rem 0.75rem; color: #cfff67; font-size: 0.8rem; }
+.terminal-recovery { flex: 0 0 auto; margin: 0; padding: 0 0.75rem 0.5rem; }
+.terminal-recovery button { min-height: 44px; border-color: #cfff67; color: #cfff67; }
+.terminal-empty { padding: 1rem; }
+.terminal-hint { flex: 0 0 auto; margin: 0; padding: 0.25rem 0.75rem; color: #a7ac9c; font-size: 0.75rem; }
+.terminal-host { flex: 1 1 auto; min-height: 0; width: 100%; padding: 0.5rem; }
+.terminal-host .xterm, .terminal-host .xterm-viewport { height: 100% !important; }
 .centered-state { min-height: calc(100dvh - 4.25rem); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
 .centered-state > p:not(.eyebrow) { color: var(--muted); }
 .error-details { max-width: 100%; overflow: auto; margin-top: 2rem; padding: 1rem; border: 1px solid var(--line); }
