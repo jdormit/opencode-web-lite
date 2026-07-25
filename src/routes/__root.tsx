@@ -10,13 +10,21 @@ import type { ErrorComponentProps } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 
 import { ThemePicker } from '~/components/theme-picker'
+import { LiveConnection } from '~/components/live-connection'
+import { getConnectionSnapshot } from '~/functions/connections'
 import { getThemePreference } from '~/functions/preferences'
 import { strings } from '~/lib/strings'
 import { themePreloadScript } from '~/lib/theme'
 import appCss from '~/styles/app.css?url'
 
 export const Route = createRootRouteWithContext()({
-  loader: () => getThemePreference(),
+  loader: async () => {
+    const [theme, connection] = await Promise.all([
+      getThemePreference(),
+      getConnectionSnapshot(),
+    ])
+    return { theme, connection }
+  },
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
@@ -41,7 +49,7 @@ export const Route = createRootRouteWithContext()({
 })
 
 function App() {
-  const theme = Route.useLoaderData()
+  const { connection, theme } = Route.useLoaderData()
 
   return (
     <div className="app-shell">
@@ -64,6 +72,7 @@ function App() {
           <Link to="/settings">{strings.navigation.settings}</Link>
         </nav>
         <ThemePicker initialTheme={theme} />
+        <LiveConnection connection={connection} />
       </header>
       <Outlet />
     </div>
@@ -71,7 +80,7 @@ function App() {
 }
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
-  const theme = Route.useLoaderData()
+  const { theme } = Route.useLoaderData()
 
   return (
     <html

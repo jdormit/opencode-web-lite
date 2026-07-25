@@ -1,17 +1,15 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, getRouteApi } from '@tanstack/react-router'
 
 import { PageIntro } from '~/components/page-intro'
-import { getConnectionSnapshot } from '~/functions/connections'
 import { strings } from '~/lib/strings'
 
 export const Route = createFileRoute('/')({
-  loader: () => getConnectionSnapshot(),
   head: () => ({ meta: [{ title: `Home | ${strings.productName}` }] }),
   component: Home,
 })
 
 function Home() {
-  const connection = Route.useLoaderData()
+  const { connection } = getRouteApi('__root__').useLoaderData()
   const connected = connection.state === 'connected'
 
   return (

@@ -93,6 +93,8 @@ button:focus-visible, a:focus-visible, select:focus-visible {
 
 .theme-picker { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.8rem; }
 .theme-picker select { min-height: 44px; border: 1px solid var(--line); border-radius: 0.25rem; padding: 0 2rem 0 0.65rem; background: var(--surface); color: var(--ink); }
+.live-status { color: var(--muted); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.live-status button { min-height: 32px; margin-left: 0.5rem; padding: 0.25rem 0.5rem; }
 
 .home-grid {
   min-height: calc(100dvh - 4.25rem);
