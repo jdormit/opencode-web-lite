@@ -1,20 +1,42 @@
-import { Link, createFileRoute, getRouteApi } from '@tanstack/react-router'
+import { Link, createFileRoute, getRouteApi, useRouter } from '@tanstack/react-router'
 
 import { PageIntro } from '~/components/page-intro'
+import { getHomeIndex } from '~/functions/home-index'
 import { strings } from '~/lib/strings'
 
 export const Route = createFileRoute('/')({
+  loader: async () => {
+    try {
+      return await getHomeIndex()
+    } catch {
+      return {
+        projects: [],
+        sessions: [],
+        projectsLimited: false,
+        errors: { projects: true, sessions: true },
+      }
+    }
+  },
   head: () => ({ meta: [{ title: `Home | ${strings.productName}` }] }),
   component: Home,
 })
 
 function Home() {
   const { connection } = getRouteApi('__root__').useLoaderData()
+  const index = Route.useLoaderData()
+  const router = useRouter()
+  const sessionGroups = (['Today', 'Yesterday', 'Older'] as const)
+    .map((label) => ({
+      label,
+      sessions: index.sessions.filter((session) => session.group === label),
+    }))
+    .filter((group) => group.sessions.length)
   const connected = connection.state === 'connected'
 
   return (
-    <main id="main-content" className="home-grid">
-      <section className="hero">
+    <main id="main-content" className="home-page">
+      <div className="home-grid">
+        <section className="hero">
         <PageIntro {...strings.home} />
         <div className="action-row">
           <Link className="button-primary" to="/new">
@@ -24,8 +46,8 @@ function Home() {
             Configure server
           </Link>
         </div>
-      </section>
-      <aside className="connection-panel" aria-labelledby="connection-title">
+        </section>
+        <aside className="connection-panel" aria-labelledby="connection-title">
         <div className="status-line">
           <span className={`status-dot ${connected ? 'is-connected' : ''}`} aria-hidden="true" />
           <span>{strings.home.connection[connection.state]}</span>
@@ -50,7 +72,54 @@ function Home() {
             <dd>{connected ? 'OpenCode v1' : 'Not detected'}</dd>
           </div>
         </dl>
-      </aside>
+        </aside>
+      </div>
+      <div className="home-index">
+        <section aria-labelledby="projects-heading">
+          <p className="eyebrow">Projects</p>
+          <h2 id="projects-heading">
+            {index.errors.projects
+              ? 'Projects could not be loaded'
+              : index.projects.length
+                ? `${index.projects.length} known${index.projectsLimited ? ' (limited)' : ''}`
+                : 'No projects yet'}
+          </h2>
+          <ul className="project-list">
+            {index.projects.map((project) => (
+              <li key={project.id}>
+                <strong>{project.name}</strong>
+                <span>{project.directory}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <section aria-labelledby="recent-heading">
+          <p className="eyebrow">Recent work</p>
+          <h2 id="recent-heading">{index.errors.sessions ? 'Sessions could not be loaded' : 'Root sessions'}</h2>
+          {index.errors.projects || index.errors.sessions ? (
+            <button type="button" onClick={() => void router.invalidate()}>Retry</button>
+          ) : null}
+          {!index.errors.sessions && !index.sessions.length ? <p className="empty-copy">No sessions yet.</p> : null}
+          {sessionGroups.map((group) => (
+            <div className="session-group" key={group.label}>
+              <h3>{group.label}</h3>
+              <ol className="session-list">
+                {group.sessions.map((session) => (
+                  <li key={session.id}>
+                    <Link
+                      to="/server/$serverKey/session/$sessionId"
+                      params={{ serverKey: connection.server.key, sessionId: session.id }}
+                    >
+                      <strong>{session.title}</strong>
+                      <span>{session.updatedLabel}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+        </section>
+      </div>
     </main>
   )
 }
