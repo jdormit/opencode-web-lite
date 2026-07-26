@@ -5,6 +5,7 @@ import { getSessionSnapshot } from '~/functions/session-snapshot'
 import { getComposerOptions } from '~/functions/composer-options'
 import { SessionComposer } from '~/components/session-composer'
 import { SessionRequests } from '~/components/session-requests'
+import { SessionTimeline } from '~/components/session-timeline'
 import { strings } from '~/lib/strings'
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import { parseRouteIdentity } from '~/lib/identity'
@@ -101,33 +102,7 @@ function Session() {
       {view === 'chat' ? <>
       {snapshot.todosUnavailable ? <p className="history-note">Todos are temporarily unavailable.</p> : null}
       {snapshot.todos.length ? <TodoDock sessionId={sessionId} snapshot={snapshot} /> : null}
-      <section className="timeline" aria-label="Session timeline">
-        {snapshot.hasOlder ? <p className="history-note">Older messages are available.</p> : null}
-        {!snapshot.items.length ? <p className="empty-copy">This session has no messages yet.</p> : null}
-        {snapshot.items.map((item) => (
-          <article className={`message message-${item.role}`} key={item.id}>
-            <header>
-              <h2>{item.role === 'user' ? 'You' : 'Assistant'}</h2>
-              <time dateTime={new Date(item.createdAt).toISOString()}>
-                {item.createdLabel}
-              </time>
-            </header>
-            {item.error ? <p className="message-error">{item.error}</p> : null}
-            {item.parts.map((part) =>
-              part.type === 'text' ? (
-                <p key={part.id}>{part.text}</p>
-              ) : part.type === 'tool' ? (
-                <div className="tool-summary" key={part.id}>
-                  <strong>{part.title ?? part.name}</strong>
-                  <span>{part.status}</span>
-                </div>
-              ) : (
-                <p className="part-status" key={part.id}>{part.label}</p>
-              ),
-            )}
-          </article>
-        ))}
-      </section>
+      <SessionTimeline key={`${serverKey}:${sessionId}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} />
       <SessionComposer
         key={`${serverKey}:${sessionId}`}
         serverKey={serverKey}

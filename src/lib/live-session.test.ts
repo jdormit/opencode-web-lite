@@ -5,7 +5,7 @@ import { applyLiveSessionEvents } from './live-session'
 import type { NormalizedGlobalEvent } from './live-store'
 
 const snapshot: SessionSnapshot = {
-  id: 'ses_1', title: 'Session', directory: '/work', items: [], hasOlder: false,
+  id: 'ses_1', title: 'Session', directory: '/work', items: [], removedMessageIds: [], hasOlder: false,
   busy: false, requestsUnavailable: false, todos: [], todosLimited: false,
   todosUnavailable: false, changes: [], changesLimited: false, changesTotal: 0,
 }
@@ -21,7 +21,7 @@ describe('applyLiveSessionEvents', () => {
       event('message.part.updated', { sessionID: 'ses_1', part: { id: 'part_1', messageID: 'msg_1', type: 'text', text: 'Hel' } }, 2),
       event('message.part.delta', { sessionID: 'ses_1', messageID: 'msg_1', partID: 'part_1', field: 'text', delta: 'lo' }, 3),
     ])
-    expect(result.items[0]?.parts).toEqual([{ id: 'part_1', type: 'text', text: 'Hello' }])
+    expect(result.items[0]?.parts).toEqual([{ id: 'part_1', type: 'text', text: 'Hello', limited: false }])
     expect(snapshot.items).toEqual([])
   })
 
@@ -39,7 +39,7 @@ describe('applyLiveSessionEvents', () => {
       ...snapshot,
       items: [{
         id: 'msg_1', role: 'assistant', createdAt: 1, createdLabel: 'now',
-        parts: [{ id: 'part_1', type: 'text', text: 'Hi' }],
+        parts: [{ id: 'part_1', type: 'text', text: 'Hi', limited: false }],
       }],
     }
     const events = [event('message.part.delta', {
@@ -47,9 +47,9 @@ describe('applyLiveSessionEvents', () => {
     }, 1)]
     const first = applyLiveSessionEvents(loaded, events)
     const second = applyLiveSessionEvents(loaded, events)
-    expect(first.items[0]?.parts[0]).toEqual({ id: 'part_1', type: 'text', text: 'Hi!' })
-    expect(second.items[0]?.parts[0]).toEqual({ id: 'part_1', type: 'text', text: 'Hi!' })
-    expect(loaded.items[0]?.parts[0]).toEqual({ id: 'part_1', type: 'text', text: 'Hi' })
+    expect(first.items[0]?.parts[0]).toEqual({ id: 'part_1', type: 'text', text: 'Hi!', limited: false })
+    expect(second.items[0]?.parts[0]).toEqual({ id: 'part_1', type: 'text', text: 'Hi!', limited: false })
+    expect(loaded.items[0]?.parts[0]).toEqual({ id: 'part_1', type: 'text', text: 'Hi', limited: false })
   })
 
   test('does not discard a valid delta whose prefix matches loader text', () => {
@@ -57,14 +57,27 @@ describe('applyLiveSessionEvents', () => {
       ...snapshot,
       items: [{
         id: 'msg_1', role: 'assistant', createdAt: 1, createdLabel: 'now',
-        parts: [{ id: 'part_1', type: 'text', text: 'foo' }],
+        parts: [{ id: 'part_1', type: 'text', text: 'foo', limited: false }],
       }],
     }
     const events = [event('message.part.delta', {
       sessionID: 'ses_1', messageID: 'msg_1', partID: 'part_1', field: 'text', delta: 'o bar',
     }, 1)]
     expect(applyLiveSessionEvents(loaded, events).items[0]?.parts[0]).toEqual({
-      id: 'part_1', type: 'text', text: 'fooo bar',
+      id: 'part_1', type: 'text', text: 'fooo bar', limited: false,
     })
+  })
+
+  test('records removed-message tombstones without mutating loader data', () => {
+    const loaded: SessionSnapshot = {
+      ...snapshot,
+      items: [{ id: 'msg_1', role: 'user', createdAt: 1, createdLabel: 'now', parts: [] }],
+    }
+    const result = applyLiveSessionEvents(loaded, [
+      event('message.removed', { sessionID: 'ses_1', messageID: 'msg_1' }, 1),
+    ])
+    expect(result.items).toEqual([])
+    expect(result.removedMessageIds).toEqual(['msg_1'])
+    expect(loaded.removedMessageIds).toEqual([])
   })
 })

@@ -163,11 +163,27 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .todo-dock small { color: var(--muted); text-transform: capitalize; }
 .timeline { display: grid; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
 .timeline > .history-note, .timeline > .empty-copy { margin: 0; padding: 1rem; background: var(--surface); }
+.history-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; background: var(--surface); }
+.history-controls p { margin: 0; color: var(--muted); }
+.history-window-note { margin: 0; padding: 0.75rem 1rem; background: var(--surface); color: var(--muted); }
+.timeline-end { height: 1px; background: var(--surface); }
+.jump-latest { position: sticky; z-index: 3; bottom: 7rem; justify-self: center; box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.2); }
 .message { padding: 1.5rem; background: var(--canvas); }
 .message-assistant { background: var(--surface); }
 .message header { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); }
+.message header button { min-height: 44px; padding: 0.25rem 0.6rem; }
 .message h2 { margin: 0; color: var(--ink); font-size: 0.85rem; }
 .message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.message-markdown > :first-child { margin-top: 0.75rem; }
+.message-markdown pre, .tool-detail pre { max-height: 28rem; overflow: auto; padding: 1rem; background: var(--canvas); white-space: pre; }
+.message-markdown :not(pre) > code { padding: 0.15rem 0.3rem; background: var(--canvas); overflow-wrap: anywhere; }
+.message-markdown img { max-width: 100%; height: auto; }
+.content-limit { color: var(--muted); font-size: 0.8rem; }
+.tool-detail { margin-top: 0.75rem; border: 1px solid var(--line); }
+.tool-detail > summary { display: flex; justify-content: space-between; gap: 1rem; min-height: 48px; padding: 0.75rem; cursor: pointer; }
+.tool-detail > summary span { color: var(--muted); text-transform: capitalize; }
+.tool-detail section, .tool-detail > p, .tool-detail > pre { margin: 0; padding: 0.75rem; border-top: 1px solid var(--line); }
+.tool-detail h3 { margin: 0 0 0.5rem; font-size: 0.8rem; }
 .tool-summary { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--line); }
 .tool-summary > * { min-width: 0; overflow-wrap: anywhere; }
 .tool-summary span { color: var(--muted); text-transform: capitalize; }

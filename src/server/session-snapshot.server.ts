@@ -1,6 +1,6 @@
 import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, Todo } from '@opencode-ai/sdk/v2/client'
 
-import type { SessionSnapshot } from '~/lib/session-snapshot'
+import type { SessionHistoryPage, SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
 import {
   createSdkForConnection,
   getDefaultConnection,
@@ -14,7 +14,7 @@ type SessionClient = {
       options?: { signal?: AbortSignal },
     ): Promise<{ data: Session | undefined; response?: Response }>
     messages(
-      parameters: { sessionID: string; directory: string; limit: number },
+      parameters: { sessionID: string; directory: string; limit: number; before?: string },
       options?: { signal?: AbortSignal },
     ): Promise<{
       data: Array<{ info: Message; parts: Part[] }> | undefined
@@ -54,7 +54,7 @@ export async function loadSessionSnapshot(
   const session = sessionResult.data
   const [messageResult, statusResult, childResult, todoResult, permissionResult, questionResult] = await Promise.all([
     client.session.messages(
-      { sessionID, directory: session.directory, limit: 21 },
+      { sessionID, directory: session.directory, limit: 20 },
       { signal },
     ),
     client.session.status?.({ directory: session.directory }, { signal }),
@@ -107,12 +107,16 @@ export async function loadSessionSnapshot(
     id: session.id,
     title: bounded(session.title, 500),
     directory: bounded(session.directory, 2_000),
-    hasOlder: messages.length > visible.length,
+    hasOlder: Boolean(messageResult.response?.headers.get('x-next-cursor')),
+    ...(messageResult.response?.headers.get('x-next-cursor')
+      ? { historyCursor: bounded(messageResult.response.headers.get('x-next-cursor')!, 2_048) }
+      : {}),
     busy: statusResult?.data?.[session.id]?.type === 'busy',
     requestsUnavailable:
       permissionResult?.failed === true ||
       questionResult?.failed === true ||
       lineageLimited,
+    removedMessageIds: [],
     todos: (todoResult?.value?.data ?? []).slice(0, 20).map((todo) => ({
       content: bounded(todo.content, 2_000),
       status: bounded(todo.status, 100),
@@ -133,16 +137,52 @@ export async function loadSessionSnapshot(
     changesTotal: currentTurnDiffs.filter((diff) => Boolean(diff.file)).length,
     ...projectPermission(permission),
     ...projectQuestion(question),
-    items: visible.map(({ info, parts }) => ({
-      id: info.id,
-      role: info.role,
-      createdAt: safeTime(info.time.created),
-      createdLabel: formatTime(info.time.created),
-      ...(info.role === 'assistant' && info.error
-        ? { error: bounded(errorLabel(info.error), 2_000) }
-        : {}),
-      parts: parts.flatMap((part) => projectPart(part)),
-    })),
+    items: visible.map(projectMessage),
+  }
+}
+
+export async function loadSessionHistoryPage(
+  serverKey: string,
+  sessionID: string,
+  cursor: string,
+  limit = 200,
+  connection: ServerConnection = getDefaultConnection(),
+  client: SessionClient = createSdkForConnection(connection, {
+    fetch: boundedFetch,
+    throwOnError: false,
+  }),
+): Promise<SessionHistoryPage> {
+  if (serverKey !== connection.key) throw new Error('Unknown server')
+  if (!cursor || cursor.length > 2_048) throw new Error('Invalid history cursor')
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid history limit')
+  const signal = AbortSignal.timeout(2_500)
+  const sessionResult = await client.session.get({ sessionID }, { signal })
+  if (!sessionResult.data) throw new Error('Session could not be loaded')
+  const response = await client.session.messages({
+    sessionID,
+    directory: sessionResult.data.directory,
+    limit,
+    before: cursor,
+  }, { signal })
+  if (!response.data) throw new Error('Session history could not be loaded')
+  const next = response.response?.headers.get('x-next-cursor') ?? undefined
+  return {
+    items: response.data.slice(-limit).map(projectMessage),
+    ...(next ? { cursor: bounded(next, 2_048) } : {}),
+    complete: !next,
+  }
+}
+
+function projectMessage({ info, parts }: { info: Message; parts: Part[] }): SessionTimelineItem {
+  return {
+    id: info.id,
+    role: info.role,
+    createdAt: safeTime(info.time.created),
+    createdLabel: formatTime(info.time.created),
+    ...(info.role === 'assistant' && info.error
+      ? { error: bounded(errorLabel(info.error), 2_000) }
+      : {}),
+    parts: parts.flatMap((part) => projectPart(part)),
   }
 }
 
@@ -222,11 +262,13 @@ function projectQuestion(request: QuestionRequest | undefined) {
 
 function projectPart(part: Part): SessionSnapshot['items'][number]['parts'] {
   if (part.type === 'text') {
+    const limited = part.text.length > 100_000
     return part.ignored || part.synthetic
       ? []
-      : [{ id: part.id, type: 'text', text: bounded(part.text, 16_000) }]
+      : [{ id: part.id, type: 'text', text: part.text.slice(0, 100_000), limited }]
   }
   if (part.type === 'tool') {
+    const input = boundedJson(part.state.input, 4_000)
     return [
       {
         id: part.id,
@@ -235,6 +277,14 @@ function projectPart(part: Part): SessionSnapshot['items'][number]['parts'] {
         status: part.state.status,
         ...('title' in part.state && part.state.title
           ? { title: bounded(part.state.title, 500) }
+          : {}),
+        ...(input ? { input } : {}),
+        ...('output' in part.state && part.state.output
+          ? { output: part.state.output.slice(0, 16_000) }
+          : {}),
+        outputLimited: 'output' in part.state && part.state.output.length > 16_000,
+        ...('error' in part.state && part.state.error
+          ? { error: bounded(part.state.error, 4_000) }
           : {}),
       },
     ]
@@ -250,12 +300,21 @@ function projectPart(part: Part): SessionSnapshot['items'][number]['parts'] {
   return label ? [{ id: part.id, type: 'status', label }] : []
 }
 
+function boundedJson(value: unknown, maximum: number) {
+  try {
+    const text = JSON.stringify(value, null, 2)
+    return text.length <= maximum ? text : `${text.slice(0, maximum)}...`
+  } catch {
+    return undefined
+  }
+}
+
 function bounded(value: string, maximum: number): string {
   return value.length <= maximum ? value : `${value.slice(0, maximum)}...`
 }
 
 function safeTime(value: number): number {
-  return Number.isFinite(value) && value >= 0 ? value : 0
+  return Number.isFinite(value) && value >= 0 && value <= 8_640_000_000_000_000 ? value : 0
 }
 
 function formatTime(value: number): string {

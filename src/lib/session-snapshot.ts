@@ -5,10 +5,26 @@ export type SessionTimelineItem = {
   createdLabel: string
   error?: string
   parts: Array<
-    | { id: string; type: 'text'; text: string }
-    | { id: string; type: 'tool'; name: string; status: string; title?: string }
+    | { id: string; type: 'text'; text: string; limited: boolean }
+    | {
+        id: string
+        type: 'tool'
+        name: string
+        status: string
+        title?: string
+        input?: string
+        output?: string
+        outputLimited: boolean
+        error?: string
+      }
     | { id: string; type: 'status'; label: string }
   >
+}
+
+export type SessionHistoryPage = {
+  items: SessionTimelineItem[]
+  cursor?: string
+  complete: boolean
 }
 
 export type SessionSnapshot = {
@@ -16,7 +32,9 @@ export type SessionSnapshot = {
   title: string
   directory: string
   items: SessionTimelineItem[]
+  removedMessageIds: string[]
   hasOlder: boolean
+  historyCursor?: string
   busy: boolean
   permission?: {
     id: string
