@@ -5,6 +5,7 @@ import type {
   ConnectionSnapshot,
   PublicServerConnection,
 } from '~/lib/connection'
+import { finiteOpenCodeFetch } from './bounded-fetch.server'
 
 export type ServerConnection = PublicServerConnection & {
   username?: string
@@ -83,6 +84,7 @@ export function createSdkForConnection(
     baseUrl: connection.url,
     headers: authorizationHeaders(connection),
     ...options,
+    fetch: options.fetch ?? finiteOpenCodeFetch,
     throwOnError: options.throwOnError ?? true,
   })
 }

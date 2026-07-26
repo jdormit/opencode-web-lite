@@ -8,39 +8,13 @@ type ProxyOptions = Readonly<{
   connection?: ServerConnection
   serverKey?: string
   fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+  timeoutMs?: number
 }>
 
-const allowedRoots = new Set([
-  'agent',
-  'auth',
-  'command',
-  'config',
-  'event',
-  'experimental',
-  'file',
-  'find',
-  'formatter',
-  'global',
-  'instance',
-  'log',
-  'lsp',
-  'mcp',
-  'path',
-  'permission',
-  'project',
-  'provider',
-  'pty',
-  'question',
-  'session',
-  'skill',
-  'sync',
-  'tui',
-  'vcs',
-  'worktree',
-  'workspace',
-])
-
 const allowedMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'])
+const maximumRequestBytes = 1024 * 1024
+const maximumResponseBytes = 4 * 1024 * 1024
+const finiteRequestTimeoutMs = 8_000
 const strippedRequestHeaders = new Set([
   'authorization',
   'accept-encoding',
@@ -102,25 +76,45 @@ export async function proxyOpenCodeRequest(
   const headers = proxyRequestHeaders(request.headers, connection)
 
   let response: Response
+  const streaming = path === '/global/event'
+  const finiteSignal = streaming
+    ? request.signal
+    : AbortSignal.any([request.signal, AbortSignal.timeout(options.timeoutMs ?? finiteRequestTimeoutMs)])
   try {
+    const declaredRequestLength = Number(request.headers.get('content-length'))
+    if (Number.isFinite(declaredRequestLength) && declaredRequestLength > maximumRequestBytes) {
+      return new Response('Request body too large', { status: 413 })
+    }
+    const body = request.method === 'GET' || request.method === 'HEAD'
+      ? undefined
+      : await readBoundedBody(request.body, maximumRequestBytes, finiteSignal)
+    if (body === null) return new Response('Request body too large', { status: 413 })
     response = await (options.fetch ?? fetch)(upstreamUrl, {
       method: request.method,
       headers,
-      body: request.method === 'GET' || request.method === 'HEAD' ? null : request.body,
+      body,
       redirect: 'manual',
-      signal: request.signal,
-      duplex: request.body ? 'half' : undefined,
+      signal: finiteSignal,
     } as RequestInit)
-  } catch {
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel()
+      return new Response('OpenCode redirect rejected', { status: 502 })
+    }
+    if (!streaming) {
+      const bounded = await boundedResponse(response, maximumResponseBytes, finiteSignal)
+      if (!bounded) return new Response('OpenCode response too large', { status: 502 })
+      response = bounded
+    }
+  } catch (error) {
+    if (isTimeout(error) || (!request.signal.aborted && finiteSignal.aborted)) {
+      return new Response('OpenCode server timed out', { status: 504 })
+    }
+    if (request.signal.aborted) return new Response(null, { status: 499 })
     return new Response('OpenCode server unavailable', { status: 502 })
   }
 
-  if (response.status >= 300 && response.status < 400) {
-    await response.body?.cancel()
-    return new Response('OpenCode redirect rejected', { status: 502 })
-  }
-
   const responseHeaders = new Headers(response.headers)
+  for (const name of connectionHeaders(response.headers)) responseHeaders.delete(name)
   for (const name of strippedResponseHeaders) responseHeaders.delete(name)
   responseHeaders.set('Cache-Control', 'private, no-store')
   if (path === '/global/event') {
@@ -158,7 +152,7 @@ function validatePath(
       decodedSegments.some(
         (segment) => !segment || segment === '.' || segment === '..',
       ) ||
-      !allowedRoots.has(decodedSegments[0] ?? '')
+      !isAllowedEndpoint(decodedSegments, request.method)
     ) {
       return undefined
     }
@@ -167,6 +161,74 @@ function validatePath(
   }
 
   return `/${rawPath}`
+}
+
+function isAllowedEndpoint(segments: string[], method: string) {
+  if (segments.length === 2 && segments[0] === 'global' && segments[1] === 'event') return method === 'GET'
+  if (segments.length === 2 && segments[0] === 'global' && segments[1] === 'health') return method === 'GET' || method === 'HEAD'
+  if (segments[0] !== 'pty') return false
+  if (segments.length === 1) return method === 'GET' || method === 'POST'
+  if (segments.length === 2 && /^[A-Za-z0-9_-]{1,128}$/.test(segments[1]!)) {
+    return method === 'GET' || method === 'PUT' || method === 'DELETE'
+  }
+  return segments.length === 3 && /^[A-Za-z0-9_-]{1,128}$/.test(segments[1]!) &&
+    segments[2] === 'connect-token' && method === 'POST'
+}
+
+async function readBoundedBody(body: ReadableStream<Uint8Array> | null, maximum: number, signal: AbortSignal) {
+  if (!body) return undefined
+  const bytes = await readBoundedBytes(body, maximum, signal)
+  return bytes ?? null
+}
+
+async function boundedResponse(response: Response, maximum: number, signal: AbortSignal) {
+  const length = Number(response.headers.get('content-length'))
+  if (Number.isFinite(length) && length > maximum) {
+    await response.body?.cancel()
+    return undefined
+  }
+  if (!response.body) return response
+  const bytes = await readBoundedBytes(response.body, maximum, signal)
+  if (!bytes) return undefined
+  return new Response(bytes, { status: response.status, statusText: response.statusText, headers: response.headers })
+}
+
+async function readBoundedBytes(stream: ReadableStream<Uint8Array>, maximum: number, signal: AbortSignal) {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    while (true) {
+      const { done, value } = await readWithSignal(reader, signal)
+      if (done) break
+      length += value.byteLength
+      if (length > maximum) { await reader.cancel(); return undefined }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const output = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength }
+  return output
+}
+
+async function readWithSignal(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal) {
+  if (signal.aborted) throw signal.reason
+  let rejectAbort: ((reason: unknown) => void) | undefined
+  const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject })
+  const onAbort = () => rejectAbort?.(signal.reason)
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([reader.read(), aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+function isTimeout(error: unknown) {
+  return error instanceof DOMException && error.name === 'TimeoutError'
 }
 
 function isSameOriginMutation(request: Request): boolean {
@@ -186,8 +248,9 @@ function proxyRequestHeaders(
   connection: ServerConnection,
 ): Headers {
   const headers = new Headers()
+  const dynamic = connectionHeaders(incoming)
   for (const [name, value] of incoming) {
-    if (!strippedRequestHeaders.has(name.toLowerCase())) headers.set(name, value)
+    if (!strippedRequestHeaders.has(name.toLowerCase()) && !dynamic.has(name.toLowerCase())) headers.set(name, value)
   }
 
   if (connection.password !== undefined) {
@@ -197,4 +260,8 @@ function proxyRequestHeaders(
     headers.set('Authorization', `Basic ${token}`)
   }
   return headers
+}
+
+function connectionHeaders(headers: Headers) {
+  return new Set((headers.get('connection') ?? '').split(',').map((name) => name.trim().toLowerCase()).filter(Boolean))
 }

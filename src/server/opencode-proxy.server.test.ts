@@ -15,8 +15,8 @@ describe('proxyOpenCodeRequest', () => {
   test('requires a keyed path to match the resolved connection', async () => {
     let fetched = false
     const response = await proxyOpenCodeRequest(
-      new Request('http://127.0.0.1/api/opencode/server/server_other/session'),
-      'session',
+      new Request('http://127.0.0.1/api/opencode/server/server_other/pty'),
+      'pty',
       { serverKey: 'server_other', connection, fetch: async () => { fetched = true; return new Response() } },
     )
     expect(response.status).toBe(404)
@@ -27,7 +27,7 @@ describe('proxyOpenCodeRequest', () => {
     let upstreamUrl = ''
     let upstreamHeaders = new Headers()
     const response = await proxyOpenCodeRequest(
-      new Request('http://127.0.0.1/api/opencode/session?directory=%2Frepo', {
+      new Request('http://127.0.0.1/api/opencode/pty?directory=%2Frepo', {
         headers: {
           'Accept-Encoding': 'gzip',
           Authorization: 'Bearer browser-secret',
@@ -35,7 +35,7 @@ describe('proxyOpenCodeRequest', () => {
           'X-Request-ID': 'request-1',
         },
       }),
-      'session',
+      'pty',
       {
         connection,
         fetch: async (input, init) => {
@@ -47,7 +47,7 @@ describe('proxyOpenCodeRequest', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(upstreamUrl).toBe('https://code.example/session?directory=%2Frepo')
+    expect(upstreamUrl).toBe('https://code.example/pty?directory=%2Frepo')
     expect(upstreamHeaders.get('authorization')).toStartWith('Basic ')
     expect(upstreamHeaders.get('authorization')).not.toContain('browser-secret')
     expect(upstreamHeaders.get('cookie')).toBeNull()
@@ -70,11 +70,11 @@ describe('proxyOpenCodeRequest', () => {
       { connection, fetch: fetcher },
     )
     const crossOrigin = await proxyOpenCodeRequest(
-      new Request('http://127.0.0.1/api/opencode/session', {
+      new Request('http://127.0.0.1/api/opencode/pty', {
         method: 'POST',
         headers: { Origin: 'https://attacker.example' },
       }),
-      'session',
+      'pty',
       { connection, fetch: fetcher },
     )
 
@@ -83,22 +83,14 @@ describe('proxyOpenCodeRequest', () => {
     expect(crossOrigin.status).toBe(403)
   })
 
-  test('allows every v1 SDK route family needed by later workflows', async () => {
-    for (const root of [
-      'auth',
-      'experimental',
-      'formatter',
-      'instance',
-      'skill',
-      'sync',
-      'workspace',
-    ]) {
+  test('rejects route families that browser workflows do not use', async () => {
+    for (const root of ['auth', 'config', 'experimental', 'session', 'workspace']) {
       const response = await proxyOpenCodeRequest(
         new Request(`http://127.0.0.1/api/opencode/${root}`),
         root,
         { connection, fetch: async () => Response.json({ ok: true }) },
       )
-      expect(response.status).toBe(200)
+      expect(response.status).toBe(404)
     }
   })
 
@@ -136,28 +128,23 @@ describe('proxyOpenCodeRequest', () => {
     expect(await response.text()).toContain('"type":"ready"')
   })
 
-  test('preserves encoded slashes in upstream path parameters', async () => {
-    let upstreamPath = ''
+  test('rejects encoded slashes in terminal identities', async () => {
     const response = await proxyOpenCodeRequest(
-      new Request('http://127.0.0.1/api/opencode/mcp/server%2Fname/connect'),
-      'mcp/server/name/connect',
+      new Request('http://127.0.0.1/api/opencode/pty/server%2Fname'),
+      'pty/server/name',
       {
         connection,
-        fetch: async (input) => {
-          upstreamPath = new URL(String(input)).pathname
-          return Response.json({ ok: true })
-        },
+        fetch: async () => { throw new Error('must not fetch') },
       },
     )
 
-    expect(response.status).toBe(200)
-    expect(upstreamPath).toBe('/mcp/server%2Fname/connect')
+    expect(response.status).toBe(404)
   })
 
   test('rejects upstream redirects', async () => {
     const response = await proxyOpenCodeRequest(
-      new Request('http://127.0.0.1/api/opencode/session'),
-      'session',
+      new Request('http://127.0.0.1/api/opencode/pty'),
+      'pty',
       {
         connection,
         fetch: async () =>
@@ -170,5 +157,52 @@ describe('proxyOpenCodeRequest', () => {
 
     expect(response.status).toBe(502)
     expect(response.headers.get('location')).toBeNull()
+  })
+
+  test('bounds finite request and response bodies', async () => {
+    const request = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/pty', {
+        method: 'POST', headers: { Origin: 'http://127.0.0.1', 'Content-Length': String(2 * 1024 * 1024) }, body: '{}',
+      }),
+      'pty',
+      { connection, fetch: async () => { throw new Error('must not fetch') } },
+    )
+    expect(request.status).toBe(413)
+
+    const response = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/pty'),
+      'pty',
+      { connection, fetch: async () => new Response('small', { headers: { 'Content-Length': String(5 * 1024 * 1024) } }) },
+    )
+    expect(response.status).toBe(502)
+  })
+
+  test('times out finite upstream requests', async () => {
+    const response = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/pty'),
+      'pty',
+      {
+        connection,
+        timeoutMs: 5,
+        fetch: async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        }),
+      },
+    )
+    expect(response.status).toBe(504)
+  })
+
+  test('classifies failures while buffering a finite response', async () => {
+    const response = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/pty'),
+      'pty',
+      {
+        connection,
+        fetch: async () => new Response(new ReadableStream({
+          start(controller) { controller.error(new Error('upstream disconnected')) },
+        })),
+      },
+    )
+    expect(response.status).toBe(502)
   })
 })

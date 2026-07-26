@@ -38,6 +38,7 @@ const defaultClientDirectory = './dist/client'
 const defaultServerEntryPoint = './dist/server/server.js'
 const websocketProbePath = '/__foundation/websocket'
 const ptyConnectPath = /^\/api\/opencode\/server\/([A-Za-z0-9_-]{1,128})\/pty\/([A-Za-z0-9_-]{1,128})\/connect$/
+const globalEventPath = /^\/api\/opencode\/server\/[A-Za-z0-9_-]{1,128}\/global\/event$/
 const maximumPendingPtyBytes = 64 * 1024
 const maximumPtyFrameBytes = 64 * 1024
 const maximumPtyBackpressureBytes = 1024 * 1024
@@ -62,7 +63,7 @@ export async function startProductionServer(options: HostOptions = {}) {
       if (!hasExpectedAuthority(url, hostname, bunServer.port)) {
         return new Response('Misdirected request', { status: 421 })
       }
-      if (url.pathname.startsWith('/api/opencode/')) {
+      if (globalEventPath.test(url.pathname) || ptyConnectPath.test(url.pathname)) {
         bunServer.timeout(request, 0)
       }
 
