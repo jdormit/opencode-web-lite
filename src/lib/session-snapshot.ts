@@ -33,6 +33,15 @@ export type SessionSnapshot = {
   id: string
   title: string
   directory: string
+  parentID?: string
+  children: Array<{ id: string; title: string }>
+  childrenLimited: boolean
+  shareUrl?: string
+  sharingEnabled: boolean
+  revertMessageID?: string
+  revertUndoMessageID?: string
+  revertedTurns: Array<{ id: string; label: string }>
+  revertsLimited: boolean
   items: SessionTimelineItem[]
   removedMessageIds: string[]
   hasOlder: boolean

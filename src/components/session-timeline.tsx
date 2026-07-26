@@ -132,10 +132,10 @@ export function SessionTimeline({
         {historyStart + 400 < historical.length ? <button type="button" onClick={() => setHistoryStart(historyStart + 400)}>Show newer loaded messages</button> : null}
       </div>
       {!itemCount ? <p className="empty-copy">This session has no messages yet.</p> : null}
-      {visibleHistory.map((item) => <TimelineMessage key={item.id} item={item} />)}
+      {visibleHistory.map((item) => <TimelineMessage key={item.id} item={item} reverted={Boolean(snapshot.revertMessageID && item.id >= snapshot.revertMessageID)} />)}
       {historical.length > visibleHistory.length ? <p className="history-window-note">Showing 400 of {historical.length} loaded older messages.</p> : null}
       <div ref={anchor} />
-      {snapshot.items.map((item) => <TimelineMessage key={item.id} item={item} />)}
+      {snapshot.items.map((item) => <TimelineMessage key={item.id} item={item} reverted={Boolean(snapshot.revertMessageID && item.id >= snapshot.revertMessageID)} />)}
       <div ref={end} className="timeline-end" aria-hidden="true" />
       {!following ? (
         <button className="jump-latest" type="button" onClick={followLatest}>
@@ -146,7 +146,7 @@ export function SessionTimeline({
   )
 }
 
-function TimelineMessage({ item }: { item: SessionTimelineItem }) {
+function TimelineMessage({ item, reverted }: { item: SessionTimelineItem; reverted: boolean }) {
   const [copyStatus, setCopyStatus] = useState<string>()
   async function copyMessage() {
     const text = item.parts
@@ -164,9 +164,10 @@ function TimelineMessage({ item }: { item: SessionTimelineItem }) {
   }
 
   return (
-    <article className={`message message-${item.role}`}>
+    <article className={`message message-${item.role}${reverted ? ' message-reverted' : ''}`}>
       <header>
         <h2>{item.role === 'user' ? 'You' : 'Assistant'}</h2>
+        {reverted ? <strong>Reverted</strong> : null}
         <time dateTime={new Date(item.createdAt).toISOString()}>{item.createdLabel}</time>
         <button type="button" onClick={() => void copyMessage()}>Copy</button>
         {copyStatus ? <span role="status">{copyStatus}</span> : null}

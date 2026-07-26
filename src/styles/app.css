@@ -152,6 +152,23 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .session-header { padding-bottom: 2rem; border-bottom: 1px solid var(--line); }
 .session-header h1 { max-width: 100%; font-size: clamp(2rem, 6vw, 4rem); overflow-wrap: anywhere; }
 .session-header > p:last-child, .history-note { color: var(--muted); overflow-wrap: anywhere; }
+.session-actions { margin-top: 1rem; border: 1px solid var(--line); background: var(--surface); }
+.session-actions > summary { min-height: 48px; padding: 0.8rem; cursor: pointer; font-weight: 700; }
+.session-action-grid { display: grid; gap: 1rem; padding: 1rem; border-top: 1px solid var(--line); }
+.session-action-grid form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; }
+.session-action-grid form label { width: 100%; font-weight: 650; }
+.session-action-grid input[type='text'], .session-action-grid form input { min-height: 44px; flex: 1 1 16rem; padding: 0.5rem; border: 1px solid var(--line); background: var(--canvas); color: var(--ink); }
+.session-action-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.fork-point { display: flex; align-items: center; gap: 0.5rem; }
+.fork-point select { min-height: 44px; max-width: 16rem; border: 1px solid var(--line); background: var(--canvas); color: var(--ink); }
+.share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.revert-list { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 1rem; border: 1px solid var(--line); }
+.revert-list strong { width: 100%; }
+.session-action-grid nav { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.session-action-grid nav strong { width: 100%; }
+.danger-zone { display: grid; gap: 0.75rem; border: 1px solid var(--danger); }
+.danger-zone label { display: flex; align-items: center; gap: 0.5rem; }
+.danger-zone button { width: fit-content; color: var(--danger); }
 .session-destinations { display: flex; gap: 0.5rem; padding: 1rem 0; overflow-x: auto; }
 .session-destinations a { flex: 0 0 auto; }
 .session-destinations a { min-height: 44px; padding: 0.65rem 1rem; border: 1px solid var(--line); text-decoration: none; }
@@ -171,6 +188,7 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .jump-latest { position: sticky; z-index: 3; bottom: 7rem; justify-self: center; box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.2); }
 .message { padding: 1.5rem; background: var(--canvas); }
 .message-assistant { background: var(--surface); }
+.message-reverted { opacity: 0.65; border-left: 3px solid var(--muted); }
 .message header { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); }
 .message header button { min-height: 44px; padding: 0.25rem 0.6rem; }
 .message h2 { margin: 0; color: var(--ink); font-size: 0.85rem; }

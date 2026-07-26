@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Message, Part, Session } from '@opencode-ai/sdk/v2/client'
+import type { Config, Message, Part, Session } from '@opencode-ai/sdk/v2/client'
 
 import type { ServerConnection } from './connections.server'
 import { loadSessionFileDiff, loadSessionHistoryPage, loadSessionSnapshot } from './session-snapshot.server'
@@ -77,6 +77,7 @@ describe('loadSessionSnapshot', () => {
           }],
         }),
       },
+      config: { get: async () => ({ data: { share: 'manual' } as Config }) },
     })
 
     expect(messageParameters).toEqual({
@@ -90,6 +91,8 @@ describe('loadSessionSnapshot', () => {
     expect(snapshot?.permission?.sessionID).toBe('ses_child')
     expect(snapshot?.historyCursor).toBe('older_cursor')
     expect(snapshot?.hasOlder).toBe(true)
+    expect(snapshot?.children).toEqual([{ id: 'ses_child', title: 'Fix the build' }])
+    expect(snapshot?.sharingEnabled).toBe(true)
     expect(snapshot?.todos).toEqual([
       { content: 'Verify the fix', status: 'pending', priority: 'high' },
     ])
@@ -122,6 +125,58 @@ describe('loadSessionSnapshot', () => {
         },
       }),
     ).rejects.toThrow('could not be loaded')
+  })
+
+  test('indexes reverted turns beyond the visible timeline window', async () => {
+    const session = {
+      id: 'ses_1', slug: 'one', projectID: 'project_1', directory: '/work/alpha', title: 'Reverted',
+      version: '1.18.4', time: { created: 1, updated: 2 }, revert: { messageID: 'msg_2' },
+    } satisfies Session
+    const message = (id: string, text: string) => ({
+      info: {
+        id, sessionID: 'ses_1', role: 'user', time: { created: Number(id.at(-1)) }, agent: 'build',
+        model: { providerID: 'provider', modelID: 'model' },
+      } satisfies Message,
+      parts: [{ id: `part_${id}`, sessionID: 'ses_1', messageID: id, type: 'text', text } satisfies Part],
+    })
+    let calls = 0
+    const snapshot = await loadSessionSnapshot('server_test', 'ses_1', connection, {
+      session: {
+        get: async () => ({ data: session }),
+        messages: async (input) => {
+          calls += 1
+          return input.before
+            ? { data: [message('msg_1', 'First'), message('msg_2', 'Second')] }
+            : {
+                data: [message('msg_3', 'Third'), message('msg_4', 'Fourth')],
+                response: new Response(null, { headers: { 'x-next-cursor': 'older' } }),
+              }
+        },
+      },
+    })
+    expect(calls).toBe(2)
+    expect(snapshot?.revertUndoMessageID).toBe('msg_1')
+    expect(snapshot?.revertedTurns).toEqual([
+      { id: 'msg_2', label: 'Second' }, { id: 'msg_3', label: 'Third' }, { id: 'msg_4', label: 'Fourth' },
+    ])
+    expect(snapshot?.revertsLimited).toBe(false)
+  })
+
+  test('marks an incomplete revert index as limited', async () => {
+    const session = {
+      id: 'ses_1', slug: 'one', projectID: 'project_1', directory: '/work/alpha', title: 'Reverted',
+      version: '1.18.4', time: { created: 1, updated: 2 }, revert: { messageID: 'msg_1' },
+    } satisfies Session
+    const snapshot = await loadSessionSnapshot('server_test', 'ses_1', connection, {
+      session: {
+        get: async () => ({ data: session }),
+        messages: async () => ({
+          data: [], response: new Response(null, { headers: { 'x-next-cursor': 'unavailable' } }),
+        }),
+      },
+    })
+    expect(snapshot?.revertsLimited).toBe(true)
+    expect(snapshot?.revertedTurns).toEqual([])
   })
 
   test('loads older history with an opaque bounded cursor', async () => {

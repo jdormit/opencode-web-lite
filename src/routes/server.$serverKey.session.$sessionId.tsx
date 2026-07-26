@@ -7,6 +7,7 @@ import { SessionComposer } from '~/components/session-composer'
 import { SessionRequests } from '~/components/session-requests'
 import { SessionTimeline } from '~/components/session-timeline'
 import { SessionChanges } from '~/components/session-changes'
+import { SessionLifecycle } from '~/components/session-lifecycle'
 import { strings } from '~/lib/strings'
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import { parseRouteIdentity } from '~/lib/identity'
@@ -90,6 +91,29 @@ function Session() {
         <p className="eyebrow">{strings.session.eyebrow}</p>
         <h1>{snapshot.title}</h1>
         <p>{snapshot.directory}</p>
+        <SessionLifecycle
+          key={`${serverKey}:${sessionId}`}
+          serverKey={serverKey}
+          sessionID={sessionId}
+          title={snapshot.title}
+          {...(snapshot.shareUrl ? { shareUrl: snapshot.shareUrl } : {})}
+          sharingEnabled={snapshot.sharingEnabled}
+          {...(snapshot.changeMessageId ? { undoMessageID: snapshot.changeMessageId } : {})}
+          userMessages={snapshot.items.filter((item) => item.role === 'user').map((item) => ({
+            id: item.id,
+            label: item.parts.find((part) => part.type === 'text')?.type === 'text'
+              ? item.parts.find((part) => part.type === 'text')!.text.slice(0, 100)
+              : item.createdLabel,
+          }))}
+          {...(snapshot.revertMessageID ? { revertMessageID: snapshot.revertMessageID } : {})}
+          {...(snapshot.revertUndoMessageID ? { revertUndoMessageID: snapshot.revertUndoMessageID } : {})}
+          revertedTurns={snapshot.revertedTurns}
+          revertsLimited={snapshot.revertsLimited}
+          {...(snapshot.parentID ? { parentID: snapshot.parentID } : {})}
+          children={snapshot.children}
+          childrenLimited={snapshot.childrenLimited}
+          forkPointsLimited={snapshot.hasOlder}
+        />
       </header>
       <nav className="session-destinations" aria-label="Session destinations">
         <Link to="." search={{}} aria-current={view === 'chat' ? 'page' : undefined}>Chat</Link>

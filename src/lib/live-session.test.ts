@@ -5,7 +5,9 @@ import { applyLiveSessionEvents } from './live-session'
 import type { NormalizedGlobalEvent } from './live-store'
 
 const snapshot: SessionSnapshot = {
-  id: 'ses_1', title: 'Session', directory: '/work', items: [], removedMessageIds: [], hasOlder: false,
+  id: 'ses_1', title: 'Session', directory: '/work', children: [], childrenLimited: false,
+  sharingEnabled: true, revertedTurns: [], revertsLimited: false,
+  items: [], removedMessageIds: [], hasOlder: false,
   busy: false, requestsUnavailable: false, todos: [], todosLimited: false,
   todosUnavailable: false, changes: [], changesLimited: false, changesTotal: 0,
   changesAdditions: 0, changesDeletions: 0,

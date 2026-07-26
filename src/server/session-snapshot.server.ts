@@ -1,4 +1,4 @@
-import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, SnapshotFileDiff, Todo } from '@opencode-ai/sdk/v2/client'
+import type { Config, Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, SnapshotFileDiff, Todo } from '@opencode-ai/sdk/v2/client'
 
 import type { SessionFileDiff, SessionHistoryPage, SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
 import {
@@ -33,6 +33,7 @@ type SessionClient = {
   }
   permission?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: PermissionRequest[] | undefined }> }
   question?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: QuestionRequest[] | undefined }> }
+  config?: { get(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: Config | undefined }> }
 }
 
 export async function loadSessionFileDiff(
@@ -75,7 +76,7 @@ export async function loadSessionSnapshot(
   }
 
   const session = sessionResult.data
-  const [messageResult, statusResult, childResult, todoResult, permissionResult, questionResult] = await Promise.all([
+  const [messageResult, statusResult, childResult, todoResult, permissionResult, questionResult, configResult] = await Promise.all([
     client.session.messages(
       { sessionID, directory: session.directory, limit: 20 },
       { signal },
@@ -97,9 +98,11 @@ export async function loadSessionSnapshot(
           .then((value) => ({ value, failed: value.data === undefined }))
           .catch(() => ({ value: undefined, failed: true }))
       : undefined,
+    client.config?.get({ directory: session.directory }, { signal }).catch(() => undefined),
   ])
   if (!messageResult.data) throw new Error('Session messages could not be loaded')
   const messages = messageResult.data
+  const revertIndex = await loadRevertIndex(session, messages, messageResult.response, client, signal)
   const visible = messages.slice(-20)
   const currentTurnMessage = [...messages].reverse().find(({ info }) => info.role === 'user')?.info
   const currentTurnSummary = currentTurnMessage?.summary
@@ -131,6 +134,18 @@ export async function loadSessionSnapshot(
     id: session.id,
     title: bounded(session.title, 500),
     directory: bounded(session.directory, 2_000),
+    ...(session.parentID ? { parentID: bounded(session.parentID, 500) } : {}),
+    children: (childResult?.data ?? []).slice(0, 50).map((child) => ({
+      id: bounded(child.id, 500),
+      title: bounded(child.title, 500),
+    })),
+    childrenLimited: (childResult?.data?.length ?? 0) > 50,
+    ...(session.share?.url ? { shareUrl: bounded(session.share.url, 4_096) } : {}),
+    sharingEnabled: Boolean(configResult?.data && configResult.data.share !== 'disabled'),
+    ...(session.revert?.messageID ? { revertMessageID: bounded(session.revert.messageID, 500) } : {}),
+    ...(revertIndex.undoMessageID ? { revertUndoMessageID: revertIndex.undoMessageID } : {}),
+    revertedTurns: revertIndex.turns,
+    revertsLimited: revertIndex.limited,
     hasOlder: Boolean(messageResult.response?.headers.get('x-next-cursor')),
     ...(messageResult.response?.headers.get('x-next-cursor')
       ? { historyCursor: bounded(messageResult.response.headers.get('x-next-cursor')!, 2_048) }
@@ -171,6 +186,52 @@ export async function loadSessionSnapshot(
     ...projectPermission(permission),
     ...projectQuestion(question),
     items: visible.map(projectMessage),
+  }
+}
+
+async function loadRevertIndex(
+  session: Session,
+  current: Array<{ info: Message; parts: Part[] }>,
+  response: Response | undefined,
+  client: SessionClient,
+  signal: AbortSignal,
+) {
+  const boundary = session.revert?.messageID
+  if (!boundary) return { turns: [], limited: false }
+  let retained = current
+  let cursor = response?.headers.get('x-next-cursor') ?? undefined
+  let failed = false
+  const complete = () => retained.some(({ info }) => info.role === 'user' && info.id < boundary)
+  while (!complete() && cursor && retained.length < 1_000) {
+    try {
+      const page = await client.session.messages({
+        sessionID: session.id,
+        directory: session.directory,
+        limit: Math.min(200, 1_000 - retained.length),
+        before: cursor,
+      }, { signal })
+      if (!page.data?.length) { failed = true; break }
+      retained = [...page.data, ...retained]
+      const next = page.response?.headers.get('x-next-cursor') ?? undefined
+      if (next === cursor) { failed = true; break }
+      cursor = next
+    } catch {
+      failed = true
+      break
+    }
+  }
+  const users = retained.filter(({ info }) => info.role === 'user')
+  const undoMessageID = [...users].reverse().find(({ info }) => info.id < boundary)?.info.id
+  const boundaryFound = users.some(({ info }) => info.id === boundary)
+  return {
+    ...(undoMessageID ? { undoMessageID: bounded(undoMessageID, 500) } : {}),
+    turns: users.filter(({ info }) => info.id >= boundary).slice(0, 1_000).map(({ info, parts }) => ({
+      id: bounded(info.id, 500),
+      label: bounded(parts.find((part) => part.type === 'text')?.type === 'text'
+        ? (parts.find((part) => part.type === 'text') as Extract<Part, { type: 'text' }>).text
+        : formatTime(info.time.created), 100),
+    })),
+    limited: failed || Boolean(cursor) || !boundaryFound,
   }
 }
 
