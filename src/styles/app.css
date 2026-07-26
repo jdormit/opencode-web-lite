@@ -141,6 +141,13 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 .settings-list article { padding: 1.5rem 0; border-bottom: 1px solid var(--line); }
 .settings-list h2 { margin: 0; }
 .settings-list .eyebrow { margin-bottom: 0.5rem; }
+.notification-settings fieldset { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-top: 1rem; border: 1px solid var(--line); }
+.notification-settings label { display: flex; gap: 0.5rem; align-items: center; }
+.notification-center { position: relative; }
+.notification-center > summary { min-height: 44px; padding: 0.65rem; cursor: pointer; }
+.notification-center > div { position: absolute; z-index: 20; right: 0; width: min(24rem, calc(100vw - 2rem)); max-height: min(32rem, calc(100dvh - 5rem)); overflow: auto; padding: 1rem; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 1rem 2rem rgb(0 0 0 / 0.2); }
+.notification-center ul { display: grid; gap: 0.5rem; padding: 0; list-style: none; }
+.notification-badge { color: var(--accent); font-weight: 700; }
 .new-session-form { display: grid; gap: 1.25rem; max-width: 40rem; margin-top: 3rem; }
 .new-session-form label { display: grid; gap: 0.5rem; font-weight: 650; }
 .new-session-form small { color: var(--muted); font-weight: 450; }

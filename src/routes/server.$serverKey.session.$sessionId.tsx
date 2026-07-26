@@ -14,6 +14,7 @@ import { parseRouteIdentity } from '~/lib/identity'
 import { getLiveStore } from '~/lib/live-store'
 import { applyLiveSessionEvents } from '~/lib/live-session'
 import { appendPromptContext } from '~/lib/prompt-context'
+import { getNotificationStore } from '~/lib/notifications'
 
 const SessionTerminal = lazy(() =>
   import('~/components/session-terminal').then((module) => ({
@@ -73,7 +74,8 @@ function Session() {
   const needsReconciliation = liveStore.needsSessionReconciliation(sessionId)
   useEffect(() => {
     liveStore.rebaseSession(sessionId, liveRevision)
-  }, [liveRevision, liveStore, sessionId])
+    getNotificationStore(serverKey).markViewed(sessionId)
+  }, [liveRevision, liveStore, serverKey, sessionId])
   useEffect(() => {
     if (!needsReconciliation) return
     liveStore.acknowledgeSessionReconciliation(sessionId)

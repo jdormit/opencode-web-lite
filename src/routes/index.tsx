@@ -1,8 +1,10 @@
 import { Link, createFileRoute, getRouteApi, useRouter } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 
 import { PageIntro } from '~/components/page-intro'
 import { getHomeIndex } from '~/functions/home-index'
 import { strings } from '~/lib/strings'
+import { getNotificationStore } from '~/lib/notifications'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
@@ -32,6 +34,24 @@ function Home() {
     }))
     .filter((group) => group.sessions.length)
   const connected = connection.state === 'connected'
+  const [unseenSessions, setUnseenSessions] = useState<Set<string>>(new Set())
+  const [errorSessions, setErrorSessions] = useState<Set<string>>(new Set())
+  const [unseenDirectories, setUnseenDirectories] = useState<Set<string>>(new Set())
+  const [errorDirectories, setErrorDirectories] = useState<Set<string>>(new Set())
+  const [requestSessions, setRequestSessions] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    const store = getNotificationStore(connection.server.key)
+    const update = () => {
+      const unseen = store.getSnapshot().entries.filter((entry) => !entry.viewed)
+      setUnseenSessions(new Set(unseen.map((entry) => entry.sessionID)))
+      setErrorSessions(new Set(unseen.filter((entry) => entry.kind === 'error').map((entry) => entry.sessionID)))
+      setRequestSessions(new Set(unseen.filter((entry) => entry.kind === 'request').map((entry) => entry.sessionID)))
+      setUnseenDirectories(new Set(unseen.map((entry) => entry.directory)))
+      setErrorDirectories(new Set(unseen.filter((entry) => entry.kind === 'error').map((entry) => entry.directory)))
+    }
+    update()
+    return store.subscribe(update)
+  }, [connection.server.key])
 
   return (
     <main id="main-content" className="home-page">
@@ -87,8 +107,10 @@ function Home() {
           <ul className="project-list">
             {index.projects.map((project) => (
               <li key={project.id}>
-                <strong>{project.name}</strong>
-                <span>{project.directory}</span>
+                 <strong>{project.name}</strong>
+                 {unseenDirectories.has(project.directory) ? <small className="notification-badge">{errorDirectories.has(project.directory) ? 'Error' : 'New activity'}</small> : null}
+                 <span>{project.directory}</span>
+                 {unseenDirectories.has(project.directory) ? <button type="button" onClick={() => getNotificationStore(connection.server.key).clearDirectory(project.directory)}>Clear project alerts</button> : null}
               </li>
             ))}
           </ul>
@@ -110,8 +132,9 @@ function Home() {
                       to="/server/$serverKey/session/$sessionId"
                       params={{ serverKey: connection.server.key, sessionId: session.id }}
                     >
-                      <strong>{session.title}</strong>
-                      <span>{session.updatedLabel}</span>
+                       <strong>{session.title}</strong>
+                       {unseenSessions.has(session.id) ? <small className="notification-badge">{errorSessions.has(session.id) ? 'Error' : requestSessions.has(session.id) ? 'Waiting for you' : 'New activity'}</small> : null}
+                       <span>{session.updatedLabel}</span>
                     </Link>
                   </li>
                 ))}
