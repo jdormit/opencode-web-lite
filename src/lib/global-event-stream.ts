@@ -25,6 +25,9 @@ export class GlobalEventStream {
   private readonly eventListeners = new Set<(events: unknown[]) => void>()
   private readonly reconnectListeners = new Set<() => void>()
   private pendingEvents: unknown[] = []
+  private static readonly maximumBlockBytes = 256 * 1024
+  private static readonly maximumBufferBytes = 1024 * 1024
+  private static readonly maximumPendingEvents = 500
 
   constructor(
     private readonly serverKey: string,
@@ -133,6 +136,9 @@ export class GlobalEventStream {
           buffer = buffer.slice(boundary + 2)
           boundary = buffer.indexOf('\n\n')
         }
+        if (buffer.length > GlobalEventStream.maximumBufferBytes) {
+          throw new Error('Event stream block exceeded its byte limit')
+        }
         if (done) break
       }
     } finally {
@@ -141,6 +147,7 @@ export class GlobalEventStream {
   }
 
   private parseBlock(block: string) {
+    if (block.length > GlobalEventStream.maximumBlockBytes) return
     const data = block
       .split('\n')
       .filter((line) => line.startsWith('data:'))
@@ -148,6 +155,7 @@ export class GlobalEventStream {
       .join('\n')
     if (!data) return
     try {
+      if (this.pendingEvents.length >= GlobalEventStream.maximumPendingEvents) this.flush()
       this.pendingEvents.push(JSON.parse(data))
       this.attempt = 0
       this.scheduleFrame()
@@ -193,12 +201,41 @@ export class GlobalEventStream {
   }
 }
 
-const streams = new Map<string, GlobalEventStream>()
+const streams = new Map<string, { stream: GlobalEventStream; touchedAt: number }>()
+const maximumStreams = 20
+const maximumIdleMs = 20 * 60_000
 
 export function getGlobalEventStream(serverKey: string) {
   const existing = streams.get(serverKey)
-  if (existing) return existing
+  if (existing) {
+    existing.touchedAt = Date.now()
+    return existing.stream
+  }
+  evictIdleStreams()
   const stream = new GlobalEventStream(serverKey)
-  streams.set(serverKey, stream)
+  streams.set(serverKey, { stream, touchedAt: Date.now() })
+  if (streams.size > maximumStreams) {
+    const candidate = [...streams.entries()]
+      .filter(([, value]) => {
+        const status = value.stream.getSnapshot().status
+        return status === 'idle' || status === 'disconnected'
+      })
+      .sort((a, b) => a[1].touchedAt - b[1].touchedAt)[0]
+    if (candidate) {
+      candidate[1].stream.stop()
+      streams.delete(candidate[0])
+    }
+  }
   return stream
+}
+
+function evictIdleStreams() {
+  const cutoff = Date.now() - maximumIdleMs
+  for (const [key, value] of streams) {
+    const status = value.stream.getSnapshot().status
+    if (value.touchedAt < cutoff && (status === 'idle' || status === 'disconnected')) {
+      value.stream.stop()
+      streams.delete(key)
+    }
+  }
 }

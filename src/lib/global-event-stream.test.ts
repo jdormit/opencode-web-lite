@@ -63,4 +63,23 @@ describe('GlobalEventStream', () => {
 
     expect(state).toEqual({ status: 'reconnecting', attempt: 1, retryInMs: 250 })
   })
+
+  test('skips oversized event blocks without losing the next valid event', async () => {
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${'x'.repeat(300_000)}\n\ndata: {"type":"valid"}\n\n`))
+        controller.close()
+      },
+    })
+    const stream = new GlobalEventStream('server_test', {
+      fetch: Object.assign(async () => new Response(body), { preconnect() {} }),
+    })
+    const events = await new Promise<unknown[]>((resolve) => {
+      stream.onEvents(resolve)
+      stream.start()
+    })
+    stream.stop()
+    expect(events).toEqual([{ type: 'valid' }])
+  })
 })

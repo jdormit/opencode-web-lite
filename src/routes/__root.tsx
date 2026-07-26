@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-router'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 
 import { ThemePicker } from '~/components/theme-picker'
 import { LiveConnection } from '~/components/live-connection'
@@ -17,7 +18,7 @@ import { strings } from '~/lib/strings'
 import { themePreloadScript } from '~/lib/theme'
 import appCss from '~/styles/app.css?url'
 
-export const Route = createRootRouteWithContext()({
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   loader: async () => {
     const [theme, connection] = await Promise.all([
       getThemePreference(),
@@ -50,32 +51,35 @@ export const Route = createRootRouteWithContext()({
 
 function App() {
   const { connection, theme } = Route.useLoaderData()
+  const { queryClient } = Route.useRouteContext()
 
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#main-content">
-        Skip to main content
-      </a>
-      <header className="route-bar">
-        <Link className="wordmark" to="/" aria-label={strings.productName}>
-          <span aria-hidden="true" className="wordmark-mark">
-            /&#62;
-          </span>
-          <span>OpenCode</span>
-          <span className="wordmark-lite">Lite</span>
-        </Link>
-        <nav aria-label="Primary navigation">
-          <Link to="/" activeOptions={{ exact: true }}>
-            {strings.navigation.home}
+    <QueryClientProvider client={queryClient}>
+      <div className="app-shell">
+        <a className="skip-link" href="#main-content">
+          Skip to main content
+        </a>
+        <header className="route-bar">
+          <Link className="wordmark" to="/" aria-label={strings.productName}>
+            <span aria-hidden="true" className="wordmark-mark">
+              /&#62;
+            </span>
+            <span>OpenCode</span>
+            <span className="wordmark-lite">Lite</span>
           </Link>
-          <Link to="/new">{strings.navigation.newSession}</Link>
-          <Link to="/settings">{strings.navigation.settings}</Link>
-        </nav>
-        <ThemePicker initialTheme={theme} />
-        <LiveConnection connection={connection} />
-      </header>
-      <Outlet />
-    </div>
+          <nav aria-label="Primary navigation">
+            <Link to="/" activeOptions={{ exact: true }}>
+              {strings.navigation.home}
+            </Link>
+            <Link to="/new">{strings.navigation.newSession}</Link>
+            <Link to="/settings">{strings.navigation.settings}</Link>
+          </nav>
+          <ThemePicker initialTheme={theme} />
+          <LiveConnection connection={connection} />
+        </header>
+        <Outlet />
+      </div>
+    </QueryClientProvider>
   )
 }
 
