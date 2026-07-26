@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 
 import { getSessionFileDiff } from '~/functions/session-snapshot'
 import type { SessionSnapshot } from '~/lib/session-snapshot'
+import { promptContextID } from '~/lib/prompt-context'
 
 export function SessionChanges({ serverKey, sessionId, snapshot }: {
   serverKey: string
@@ -60,7 +61,12 @@ export function SessionChanges({ serverKey, sessionId, snapshot }: {
 }
 
 function addDiffContext(file: string, patch: string) {
-  window.dispatchEvent(new CustomEvent('opencode:add-context', { detail: {
-    text: `Diff context: ${file}\n\n\`\`\`diff\n${patch.slice(0, 32_000)}\n\`\`\``,
+  window.dispatchEvent(new CustomEvent('opencode:add-context', { cancelable: true, detail: {
+    context: {
+      id: promptContextID('diff', file),
+      type: 'diff',
+      label: file,
+      text: `Diff context: ${file}\n\n\`\`\`diff\n${patch.slice(0, 31_000)}\n\`\`\``,
+    },
   } }))
 }

@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from 
 
 import type { ComposerOptions } from '~/lib/composer-options'
 import { sendPromptMutation, stopSessionMutation } from '~/functions/prompt'
+import { buildPromptText, parsePromptContexts, setPromptContextLock, type PromptContextItem } from '~/lib/prompt-context'
 
 type Props = Readonly<{
   serverKey: string
@@ -27,17 +28,21 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
   const [submittedText, setSubmittedText] = useState('')
   const [retryMessageID, setRetryMessageID] = useState('')
   const [storageFailed, setStorageFailed] = useState(false)
+  const [contexts, setContexts] = useState<PromptContextItem[]>([])
+  const [accepting, setAccepting] = useState(false)
   const submitting = useRef(false)
   const textRef = useRef('')
   const draftKey = `opencode-web-lite:session-draft:v1:${serverKey}:${sessionID}`
+  const contextKey = `opencode-web-lite:session-contexts:v1:${serverKey}:${sessionID}`
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(draftKey) ?? ''
       setText(saved)
       textRef.current = saved
+      setContexts(parsePromptContexts(JSON.parse(localStorage.getItem(contextKey) ?? '[]')))
     } catch {}
-  }, [draftKey])
+  }, [contextKey, draftKey])
 
   useEffect(() => {
     if (!options.agents.some((option) => option.name === agent))
@@ -73,10 +78,11 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
   }
 
   const syncDraft = useEffectEvent((event: Event) => {
-    const detail = (event as CustomEvent<{ key?: unknown; value?: unknown }>).detail
-    if (detail?.key !== draftKey || typeof detail.value !== 'string') return
-    setText(detail.value)
-    textRef.current = detail.value
+    const detail = (event as CustomEvent<{ key?: unknown; contexts?: unknown }>).detail
+    if (detail?.key !== draftKey) return
+    setContexts(parsePromptContexts(detail.contexts))
+    setRetryMessageID('')
+    if (state === 'failed') setState('idle')
   })
 
   useEffect(() => {
@@ -85,19 +91,25 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
   }, [])
 
   async function submit() {
-    if (submitting.current || !text.trim() || !agent || !modelKey) return
+    const promptText = buildPromptText(text, contexts)
+    if (submitting.current || !promptText?.trim() || !agent || !modelKey) return
     submitting.current = true
+    setAccepting(true)
+    setPromptContextLock(contextKey, true)
     setState('sending')
-    const submittedText = text
-    setSubmittedText(submittedText)
+    const submittedDraft = text
+    const submittedContextIDs = new Set(contexts.map((item) => item.id))
+    setSubmittedText(submittedDraft || `${contexts.length} context item${contexts.length === 1 ? '' : 's'}`)
     const messageID = retryMessageID || createMessageID()
     setRetryMessageID(messageID)
     const [providerID = '', modelID = ''] = modelKey.split('\0')
     try {
       await sendPrompt({
-        data: { serverKey, sessionID, messageID, text: submittedText, agent, providerID, modelID, variant },
+        data: { serverKey, sessionID, messageID, text: promptText, agent, providerID, modelID, variant },
       })
-      if (textRef.current === submittedText) updateText('')
+      if (textRef.current === submittedDraft) updateText('')
+      try { localStorage.removeItem(contextKey) } catch { setStorageFailed(true) }
+      setContexts((current) => current.filter((item) => !submittedContextIDs.has(item.id)))
       setState('sent')
       setRetryMessageID('')
       try {
@@ -110,9 +122,11 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
       }
     } catch {
       setState('failed')
-      if (textRef.current === submittedText) updateText(submittedText)
+      if (textRef.current === submittedDraft) updateText(submittedDraft)
     } finally {
       submitting.current = false
+      setAccepting(false)
+      setPromptContextLock(contextKey, false)
     }
   }
 
@@ -139,10 +153,20 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
   const selectedModel = options.models.find(
     (model) => `${model.providerID}\0${model.modelID}` === modelKey,
   )
+  const currentPrompt = buildPromptText(text, contexts)
+  const controlsLocked = accepting || state === 'stopping'
 
   function selectionChanged() {
     setRetryMessageID('')
     if (state === 'failed') setState('idle')
+  }
+
+  function removeContext(id: string) {
+    const next = contexts.filter((item) => item.id !== id)
+    setContexts(next)
+    setRetryMessageID('')
+    if (state === 'failed') setState('idle')
+    try { localStorage.setItem(contextKey, JSON.stringify(next)) } catch { setStorageFailed(true) }
   }
 
   return (
@@ -151,9 +175,16 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
         <p className="form-error" role="alert">No selectable agent or connected model is available.</p>
       ) : null}
       {blocked ? <p className="form-error" role="status">Answer the pending request before sending another prompt.</p> : null}
+      {currentPrompt === undefined ? <p className="form-error" role="alert">Prompt text and context exceed the 100,000-character limit.</p> : null}
       {state === 'sending' && submittedText ? (
         <div className="optimistic-message" aria-label="Sending prompt">{submittedText}</div>
       ) : null}
+      {contexts.length ? <ul className="composer-contexts" aria-label="Prompt context">
+        {contexts.map((item) => <li key={item.id}>
+          <span><strong>{item.type === 'file' ? 'File' : 'Diff'}</strong> {item.label}</span>
+          <button type="button" disabled={controlsLocked} aria-label={`Remove ${item.label}`} onClick={() => removeContext(item.id)}>Remove</button>
+        </li>)}
+      </ul> : null}
       <textarea
         aria-label="Prompt"
         value={text}
@@ -162,16 +193,16 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
         placeholder="Ask OpenCode..."
         maxLength={100_000}
         rows={4}
-        disabled={blocked}
+        disabled={blocked || controlsLocked}
       />
       <div className="composer-controls">
-        <select disabled={blocked} aria-label="Agent" value={agent} onChange={(event) => {
+        <select disabled={blocked || controlsLocked} aria-label="Agent" value={agent} onChange={(event) => {
           setAgent(event.target.value)
           selectionChanged()
         }}>
           {options.agents.map((option) => <option key={option.name}>{option.name}</option>)}
         </select>
-        <select disabled={blocked} aria-label="Model" value={modelKey} onChange={(event) => {
+        <select disabled={blocked || controlsLocked} aria-label="Model" value={modelKey} onChange={(event) => {
           setModelKey(event.target.value)
           setVariant('')
           selectionChanged()
@@ -183,7 +214,7 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
           ))}
         </select>
         {selectedModel?.variants.length ? (
-          <select disabled={blocked} aria-label="Variant" value={variant} onChange={(event) => {
+          <select disabled={blocked || controlsLocked} aria-label="Variant" value={variant} onChange={(event) => {
             setVariant(event.target.value)
             selectionChanged()
           }}>
@@ -191,7 +222,7 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
             {selectedModel.variants.map((name) => <option key={name}>{name}</option>)}
           </select>
         ) : null}
-        <button type="button" disabled={blocked || state === 'sending' || state === 'stopping' || !text.trim() || !agent || !modelKey} onClick={() => void submit()}>
+        <button type="button" disabled={blocked || state === 'sending' || state === 'stopping' || !currentPrompt?.trim() || !agent || !modelKey} onClick={() => void submit()}>
           {state === 'sending' ? 'Sending...' : busy ? 'Steer' : 'Send'}
         </button>
         {busy || state === 'sending' || state === 'stopping' ? (

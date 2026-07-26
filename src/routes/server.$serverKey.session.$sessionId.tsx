@@ -14,7 +14,7 @@ import { parseRouteIdentity } from '~/lib/identity'
 import { getLiveStore } from '~/lib/live-store'
 import { applyLiveSessionEvents } from '~/lib/live-session'
 import { getNotificationStore } from '~/lib/notifications'
-import { appendPromptContext } from '~/lib/prompt-context'
+import { addPromptContext, parsePromptContexts, promptContextLocked } from '~/lib/prompt-context'
 
 const SessionTerminal = lazy(() =>
   import('~/components/session-terminal').then((module) => ({
@@ -138,19 +138,21 @@ function Session() {
       {snapshot.todosUnavailable ? <p className="history-note">Todos are temporarily unavailable.</p> : null}
       {snapshot.todos.length ? <TodoDock sessionId={sessionId} snapshot={snapshot} /> : null}
       <SessionTimeline key={`${serverKey}:${sessionId}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} />
-      <SessionComposer
-        key={`${serverKey}:${sessionId}`}
-        serverKey={serverKey}
-        sessionID={sessionId}
-        options={composer}
-        busy={snapshot.busy}
-        blocked={Boolean(snapshot.permission || snapshot.question || snapshot.requestsUnavailable)}
-      />
       </> : view === 'changes' ? (
         <SessionChanges key={`${serverKey}:${sessionId}:${snapshot.changeMessageId ?? ''}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} />
       ) : view === 'files' ? (
         <Suspense fallback={<p>Loading files...</p>}><SessionFiles key={`${serverKey}:${sessionId}`} serverKey={serverKey} sessionId={sessionId} /></Suspense>
       ) : <Suspense fallback={<p>Loading terminal...</p>}><SessionTerminal serverKey={serverKey} directory={snapshot.directory} /></Suspense>}
+      <div hidden={view !== 'chat'}>
+        <SessionComposer
+          key={`${serverKey}:${sessionId}`}
+          serverKey={serverKey}
+          sessionID={sessionId}
+          options={composer}
+          busy={snapshot.busy}
+          blocked={Boolean(snapshot.permission || snapshot.question || snapshot.requestsUnavailable)}
+        />
+      </div>
       <footer className="session-identity">
         <span>{serverKey}</span><span>{sessionId}</span>
       </footer>
@@ -162,22 +164,26 @@ function SessionContextCollector({ serverKey, sessionId }: { serverKey: string; 
   const [status, setStatus] = useState<string>()
   useEffect(() => {
     const key = `opencode-web-lite:session-draft:v1:${serverKey}:${sessionId}`
+    const contextKey = `opencode-web-lite:session-contexts:v1:${serverKey}:${sessionId}`
     const collect = (event: Event) => {
-      const text = (event as CustomEvent<{ text?: unknown }>).detail?.text
-      let current = ''
-      try { current = localStorage.getItem(key) ?? '' } catch {}
-      const result = appendPromptContext(current, text)
+      if (promptContextLocked(contextKey)) {
+        event.preventDefault()
+        setStatus('Wait for the current prompt to be accepted before changing context.')
+        return
+      }
+      const context = (event as CustomEvent<{ context?: unknown }>).detail?.context
+      let current: unknown = []
+      try { current = JSON.parse(localStorage.getItem(contextKey) ?? '[]') } catch {}
+      const result = addPromptContext(parsePromptContexts(current), context)
       if (!result.ok) {
         event.preventDefault()
-        setStatus(result.reason === 'context-limit'
-          ? 'Context was not added because it exceeds the 32,000-character limit.'
-          : 'Context was not added because the prompt would exceed its limit.')
+        setStatus('Context was not added because it exceeds the item or 32,000-character limit.')
         return
       }
       try {
-        localStorage.setItem(key, result.value)
+        localStorage.setItem(contextKey, JSON.stringify(result.value))
         window.dispatchEvent(new CustomEvent('opencode:draft-updated', {
-          detail: { key, value: result.value },
+          detail: { key, contexts: result.value },
         }))
         setStatus('Context added to the prompt draft.')
       } catch {

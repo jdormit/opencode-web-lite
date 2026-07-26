@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { findSessionFiles, getSessionFile, getSessionFiles } from '~/functions/files'
 import { FilePreviewCache, type FileEntry, type FilePreview } from '~/lib/files'
+import { promptContextID } from '~/lib/prompt-context'
 
 const previewCache = new FilePreviewCache()
 
@@ -152,7 +153,12 @@ function FilePreviewPanel({ preview, storageKey, onRefresh }: { preview: FilePre
       return
     }
     const accepted = window.dispatchEvent(new CustomEvent('opencode:add-context', {
-      detail: { text }, cancelable: true,
+      detail: { context: {
+        id: promptContextID('file', preview.path),
+        type: 'file',
+        label: `${preview.path} (${comments.length} comment${comments.length === 1 ? '' : 's'})`,
+        text,
+      } }, cancelable: true,
     }))
     if (accepted) setComments([])
   }
