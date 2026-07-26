@@ -12,8 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as ApiOpencodeSplatRouteImport } from './routes/api.opencode.$'
 import { Route as ServerServerKeySessionSessionIdRouteImport } from './routes/server.$serverKey.session.$sessionId'
+import { Route as ApiOpencodeServerServerKeySplatRouteImport } from './routes/api.opencode.server.$serverKey.$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,15 +30,16 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiOpencodeSplatRoute = ApiOpencodeSplatRouteImport.update({
-  id: '/api/opencode/$',
-  path: '/api/opencode/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ServerServerKeySessionSessionIdRoute =
   ServerServerKeySessionSessionIdRouteImport.update({
     id: '/server/$serverKey/session/$sessionId',
     path: '/server/$serverKey/session/$sessionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiOpencodeServerServerKeySplatRoute =
+  ApiOpencodeServerServerKeySplatRouteImport.update({
+    id: '/api/opencode/server/$serverKey/$',
+    path: '/api/opencode/server/$serverKey/$',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -46,23 +47,23 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/new': typeof NewRoute
   '/settings': typeof SettingsRoute
-  '/api/opencode/$': typeof ApiOpencodeSplatRoute
   '/server/$serverKey/session/$sessionId': typeof ServerServerKeySessionSessionIdRoute
+  '/api/opencode/server/$serverKey/$': typeof ApiOpencodeServerServerKeySplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/new': typeof NewRoute
   '/settings': typeof SettingsRoute
-  '/api/opencode/$': typeof ApiOpencodeSplatRoute
   '/server/$serverKey/session/$sessionId': typeof ServerServerKeySessionSessionIdRoute
+  '/api/opencode/server/$serverKey/$': typeof ApiOpencodeServerServerKeySplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/new': typeof NewRoute
   '/settings': typeof SettingsRoute
-  '/api/opencode/$': typeof ApiOpencodeSplatRoute
   '/server/$serverKey/session/$sessionId': typeof ServerServerKeySessionSessionIdRoute
+  '/api/opencode/server/$serverKey/$': typeof ApiOpencodeServerServerKeySplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -70,30 +71,30 @@ export interface FileRouteTypes {
     | '/'
     | '/new'
     | '/settings'
-    | '/api/opencode/$'
     | '/server/$serverKey/session/$sessionId'
+    | '/api/opencode/server/$serverKey/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/new'
     | '/settings'
-    | '/api/opencode/$'
     | '/server/$serverKey/session/$sessionId'
+    | '/api/opencode/server/$serverKey/$'
   id:
     | '__root__'
     | '/'
     | '/new'
     | '/settings'
-    | '/api/opencode/$'
     | '/server/$serverKey/session/$sessionId'
+    | '/api/opencode/server/$serverKey/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   NewRoute: typeof NewRoute
   SettingsRoute: typeof SettingsRoute
-  ApiOpencodeSplatRoute: typeof ApiOpencodeSplatRoute
   ServerServerKeySessionSessionIdRoute: typeof ServerServerKeySessionSessionIdRoute
+  ApiOpencodeServerServerKeySplatRoute: typeof ApiOpencodeServerServerKeySplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -119,18 +120,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/opencode/$': {
-      id: '/api/opencode/$'
-      path: '/api/opencode/$'
-      fullPath: '/api/opencode/$'
-      preLoaderRoute: typeof ApiOpencodeSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/server/$serverKey/session/$sessionId': {
       id: '/server/$serverKey/session/$sessionId'
       path: '/server/$serverKey/session/$sessionId'
       fullPath: '/server/$serverKey/session/$sessionId'
       preLoaderRoute: typeof ServerServerKeySessionSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/opencode/server/$serverKey/$': {
+      id: '/api/opencode/server/$serverKey/$'
+      path: '/api/opencode/server/$serverKey/$'
+      fullPath: '/api/opencode/server/$serverKey/$'
+      preLoaderRoute: typeof ApiOpencodeServerServerKeySplatRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -140,8 +141,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   NewRoute: NewRoute,
   SettingsRoute: SettingsRoute,
-  ApiOpencodeSplatRoute: ApiOpencodeSplatRoute,
   ServerServerKeySessionSessionIdRoute: ServerServerKeySessionSessionIdRoute,
+  ApiOpencodeServerServerKeySplatRoute: ApiOpencodeServerServerKeySplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

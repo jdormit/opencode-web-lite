@@ -6,24 +6,28 @@ import { PageIntro } from '~/components/page-intro'
 import { getHomeIndex } from '~/functions/home-index'
 import { getComposerOptions } from '~/functions/composer-options'
 import { createSessionMutation } from '~/functions/session-create'
+import { getConnectionSnapshot } from '~/functions/connections'
 import { strings } from '~/lib/strings'
 
 export const Route = createFileRoute('/new')({
   loader: async () => {
     try {
-      const index = await getHomeIndex()
+      const connection = await getConnectionSnapshot()
+      const serverKey = connection.server.key
+      const index = await getHomeIndex({ data: { serverKey } })
       const firstDirectory = index.projects[0]?.directory
       const composer = firstDirectory
-        ? await getComposerOptions({ data: { directory: firstDirectory } })
+        ? await getComposerOptions({ data: { serverKey, directory: firstDirectory } })
         : undefined
       return {
         projects: index.projects,
         limited: index.projectsLimited,
         error: index.errors.projects,
         composer,
+        serverKey,
       }
     } catch {
-      return { projects: [], limited: false, error: true, composer: undefined }
+      return { projects: [], limited: false, error: true, composer: undefined, serverKey: 'invalid' }
     }
   },
   head: () => ({ meta: [{ title: `New session | ${strings.productName}` }] }),
@@ -31,7 +35,7 @@ export const Route = createFileRoute('/new')({
 })
 
 function NewSession() {
-  const { composer: initialComposer, error: loadError, limited, projects } = Route.useLoaderData()
+  const { composer: initialComposer, error: loadError, limited, projects, serverKey } = Route.useLoaderData()
   const createSession = useServerFn(createSessionMutation)
   const loadComposer = useServerFn(getComposerOptions)
   const navigate = useNavigate()
@@ -50,25 +54,26 @@ function NewSession() {
   )
   const [variant, setVariant] = useState('')
   const submitting = useRef(false)
+  const draftKey = `opencode-web-lite:new-session-draft:v1:${serverKey}`
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem('opencode-web-lite:draft:v1') ?? 'null') as unknown
+      const saved = JSON.parse(localStorage.getItem(draftKey) ?? 'null') as unknown
       if (saved && typeof saved === 'object') {
         if ('title' in saved && typeof saved.title === 'string') setTitle(saved.title)
         if (
           'directory' in saved &&
           typeof saved.directory === 'string' &&
-          projects.some((project) => project.directory === saved.directory)
+          projects.some((project) => project.worktrees.some((worktree) => worktree.directory === saved.directory))
         ) void selectDirectory(saved.directory)
       }
     } catch {}
-  }, [projects])
+  }, [draftKey, projects])
 
   function saveDraft(nextDirectory: string, nextTitle: string) {
     try {
       localStorage.setItem(
-        'opencode-web-lite:draft:v1',
+        draftKey,
         JSON.stringify({ directory: nextDirectory, title: nextTitle }),
       )
     } catch {}
@@ -79,7 +84,7 @@ function NewSession() {
     saveDraft(nextDirectory, title)
     setError('')
     try {
-      const next = await loadComposer({ data: { directory: nextDirectory } })
+      const next = await loadComposer({ data: { serverKey, directory: nextDirectory } })
       setComposer(next)
       setAgent(next.defaultAgent ?? '')
       setModelKey(
@@ -106,6 +111,7 @@ function NewSession() {
     const [providerID = '', modelID = ''] = modelKey.split('\0')
     void createSession({
       data: {
+        serverKey,
         directory,
         title,
         agent,
@@ -116,7 +122,7 @@ function NewSession() {
     })
       .then(async (result) => {
         try {
-          localStorage.removeItem('opencode-web-lite:draft:v1')
+          localStorage.removeItem(draftKey)
         } catch {}
         setCreated(result)
         await navigate({
@@ -147,9 +153,11 @@ function NewSession() {
           <label>
             <span>Project</span>
             <select name="directory" required value={directory} onChange={(event) => void selectDirectory(event.target.value)}>
-              {projects.map((project) => (
-                <option key={project.id} value={project.directory}>{project.name}</option>
-              ))}
+              {projects.flatMap((project) => project.worktrees.map((worktree) => (
+                <option key={`${project.id}:${worktree.directory}`} value={worktree.directory}>
+                  {project.name} · {worktree.current ? 'Main worktree' : worktree.directory.split('/').at(-1)}
+                </option>
+              )))}
             </select>
           </label>
           <label>

@@ -1,6 +1,6 @@
 import { useServerFn } from '@tanstack/react-start'
 import { useRouter } from '@tanstack/react-router'
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from 'react'
 
 import type { ComposerOptions } from '~/lib/composer-options'
 import { sendPromptMutation, stopSessionMutation } from '~/functions/prompt'
@@ -71,6 +71,18 @@ export function SessionComposer({ serverKey, sessionID, options, busy, blocked }
       setStorageFailed(true)
     }
   }
+
+  const syncDraft = useEffectEvent((event: Event) => {
+    const detail = (event as CustomEvent<{ key?: unknown; value?: unknown }>).detail
+    if (detail?.key !== draftKey || typeof detail.value !== 'string') return
+    setText(detail.value)
+    textRef.current = detail.value
+  })
+
+  useEffect(() => {
+    window.addEventListener('opencode:draft-updated', syncDraft)
+    return () => window.removeEventListener('opencode:draft-updated', syncDraft)
+  }, [])
 
   async function submit() {
     if (submitting.current || !text.trim() || !agent || !modelKey) return

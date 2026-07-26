@@ -2,6 +2,7 @@ export type HomeProject = {
   id: string
   name: string
   directory: string
+  worktrees: Array<{ directory: string; current: boolean }>
 }
 
 export type HomeSession = {

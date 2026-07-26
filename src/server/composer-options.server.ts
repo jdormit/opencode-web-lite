@@ -3,7 +3,7 @@ import type { Agent, Project, Provider } from '@opencode-ai/sdk/v2/client'
 import type { ComposerOptions } from '~/lib/composer-options'
 import {
   createSdkForConnection,
-  getDefaultConnection,
+  resolveConnection,
   type ServerConnection,
 } from './connections.server'
 
@@ -20,14 +20,17 @@ type OptionsClient = {
 }
 
 export async function loadComposerOptions(
+  serverKey: string,
   directory: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   rootClient = createSdkForConnection(connection),
   directoryClient: OptionsClient = createSdkForConnection(connection, { directory }),
 ): Promise<ComposerOptions> {
+  if (serverKey !== connection.key) throw new Error('Unknown server')
   const signal = AbortSignal.timeout(1_500)
   const projects = await rootClient.project.list(undefined, { signal })
-  if (!projects.data?.some((project) => project.worktree === directory))
+  if (!projects.data?.some((project) =>
+    project.worktree === directory || project.sandboxes.includes(directory)))
     throw new Error('The selected project is no longer available')
 
   const [agentResult, providerResult] = await Promise.all([

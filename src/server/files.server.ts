@@ -2,7 +2,7 @@ import type { FileContent, FileNode, Session } from '@opencode-ai/sdk/v2/client'
 
 import type { FileListResult, FilePreview } from '~/lib/files'
 import { validProjectPath } from '~/lib/files'
-import { createSdkForConnection, getDefaultConnection, type ServerConnection } from './connections.server'
+import { createSdkForConnection, resolveConnection, type ServerConnection } from './connections.server'
 
 type FilesClient = {
   session: { get(parameters: { sessionID: string }, options?: { signal?: AbortSignal }): Promise<{ data: Session | undefined }> }
@@ -19,7 +19,7 @@ export async function listSessionFiles(
   serverKey: string,
   sessionID: string,
   path: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: FilesClient = createSdkForConnection(connection, { fetch: boundedFileFetch, throwOnError: false }),
 ): Promise<FileListResult> {
   if (!validProjectPath(path)) throw new Error('Invalid file path')
@@ -40,7 +40,7 @@ export async function searchSessionFiles(
   serverKey: string,
   sessionID: string,
   query: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: FilesClient = createSdkForConnection(connection, { fetch: boundedFileFetch, throwOnError: false }),
 ) {
   const normalized = query.trim()
@@ -56,7 +56,7 @@ export async function readSessionFile(
   serverKey: string,
   sessionID: string,
   path: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: FilesClient = createSdkForConnection(connection, { fetch: boundedFileFetch, throwOnError: false }),
 ): Promise<FilePreview> {
   if (!path || !validProjectPath(path)) throw new Error('Invalid file path')

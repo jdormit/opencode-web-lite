@@ -1,5 +1,5 @@
 import type { Session } from '@opencode-ai/sdk/v2/client'
-import { createSdkForConnection, getDefaultConnection, type ServerConnection } from './connections.server'
+import { createSdkForConnection, resolveConnection, type ServerConnection } from './connections.server'
 
 export type LifecycleAction = 'rename' | 'archive' | 'delete' | 'fork' | 'share' | 'unshare' | 'compact' | 'undo' | 'redo'
 
@@ -22,7 +22,7 @@ export async function mutateSessionLifecycle(
   sessionID: string,
   action: LifecycleAction,
   value?: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: Client = createSdkForConnection(connection, { throwOnError: false }),
 ) {
   if (serverKey !== connection.key) throw new Error('Unknown server')

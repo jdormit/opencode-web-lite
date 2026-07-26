@@ -3,7 +3,7 @@ import type { ComposerOptions } from '~/lib/composer-options'
 
 import {
   createSdkForConnection,
-  getDefaultConnection,
+  resolveConnection,
   type ServerConnection,
 } from './connections.server'
 import { loadComposerOptions } from './composer-options.server'
@@ -24,6 +24,7 @@ type CreateClient = {
 
 export async function createSession(
   input: {
+    serverKey: string
     directory: string
     title: string
     agent: string
@@ -31,10 +32,11 @@ export async function createSession(
     modelID: string
     variant: string
   },
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(input.serverKey),
   client: CreateClient = createSdkForConnection(connection),
   composerOptions?: ComposerOptions,
 ) {
+  if (input.serverKey !== connection.key) throw new Error('Unknown server')
   const directory = input.directory.trim()
   const title = input.title.trim()
   if (!directory || directory.length > 4_096) throw new Error('Choose a valid project')
@@ -42,9 +44,10 @@ export async function createSession(
 
   const projectSignal = AbortSignal.timeout(5_000)
   const projectResult = await client.project.list(undefined, { signal: projectSignal })
-  const project = projectResult.data?.find((candidate) => candidate.worktree === directory)
+  const project = projectResult.data?.find((candidate) =>
+    candidate.worktree === directory || candidate.sandboxes.includes(directory))
   if (!project) throw new Error('The selected project is no longer available')
-  const options = composerOptions ?? (await loadComposerOptions(directory, connection))
+  const options = composerOptions ?? (await loadComposerOptions(input.serverKey, directory, connection))
   if (!options.agents.some((agent) => agent.name === input.agent))
     throw new Error('The selected agent is no longer available')
   const model = options.models.find(
@@ -57,7 +60,7 @@ export async function createSession(
 
   const result = await client.session.create(
     {
-      directory: project.worktree,
+      directory,
       ...(title ? { title } : {}),
       agent: input.agent,
       model: {

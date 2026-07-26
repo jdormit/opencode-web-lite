@@ -1,5 +1,5 @@
 import type { PermissionRequest, QuestionRequest, Session } from '@opencode-ai/sdk/v2/client'
-import { createSdkForConnection, getDefaultConnection, type ServerConnection } from './connections.server'
+import { createSdkForConnection, resolveConnection, type ServerConnection } from './connections.server'
 
 type RequestClient = {
   session: { get(parameters: { sessionID: string }): Promise<{ data: Session | undefined }> }
@@ -20,7 +20,7 @@ export async function replyPermission(input: {
   directory: string
   requestID: string
   reply: 'once' | 'always' | 'reject'
-}, connection: ServerConnection = getDefaultConnection(), client: RequestClient = createSdkForConnection(connection)) {
+}, connection: ServerConnection = resolveConnection(input.serverKey), client: RequestClient = createSdkForConnection(connection)) {
   if (input.serverKey !== connection.key) throw new Error('Unknown server')
   const session = await client.session.get({ sessionID: input.sessionID })
   if (!session.data) throw new Error('Session not found')
@@ -42,7 +42,7 @@ export async function replyQuestion(input: {
   directory: string
   requestID: string
   answers: string[][]
-}, connection: ServerConnection = getDefaultConnection(), client: RequestClient = createSdkForConnection(connection)) {
+}, connection: ServerConnection = resolveConnection(input.serverKey), client: RequestClient = createSdkForConnection(connection)) {
   if (input.serverKey !== connection.key) throw new Error('Unknown server')
   const session = await client.session.get({ sessionID: input.sessionID })
   if (!session.data) throw new Error('Session not found')
@@ -75,7 +75,7 @@ export async function rejectQuestion(input: {
   serverKey: string
   sessionID: string
   requestID: string
-}, connection: ServerConnection = getDefaultConnection(), client: RequestClient = createSdkForConnection(connection)) {
+}, connection: ServerConnection = resolveConnection(input.serverKey), client: RequestClient = createSdkForConnection(connection)) {
   if (input.serverKey !== connection.key) throw new Error('Unknown server')
   const session = await client.session.get({ sessionID: input.sessionID })
   if (!session.data) throw new Error('Session not found')

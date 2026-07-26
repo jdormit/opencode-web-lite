@@ -32,7 +32,7 @@ describe('loadHomeIndex', () => {
         ...extra,
       }) satisfies Session
     let parameters: unknown
-    const result = await loadHomeIndex(connection, {
+    const result = await loadHomeIndex('server_test', connection, {
       project: { list: async () => ({ data: projects }) },
       session: {
         list: async (input) => {
@@ -53,6 +53,7 @@ describe('loadHomeIndex', () => {
 
     expect(parameters).toEqual({ roots: true, limit: 64 })
     expect(result.projects[0]?.name).toBe('alpha')
+    expect(result.projects[0]?.worktrees).toEqual([{ directory: '/work/alpha', current: true }])
     expect(result.sessions.map(({ id }) => id)).toEqual(['newer', 'older'])
     expect(JSON.stringify(result)).not.toContain('sandboxes')
     expect(result.errors).toEqual({ projects: false, sessions: false })
@@ -65,7 +66,7 @@ describe('loadHomeIndex', () => {
       time: { created: 1, updated: 2 },
       sandboxes: [],
     } satisfies Project
-    const result = await loadHomeIndex(connection, {
+    const result = await loadHomeIndex('server_test', connection, {
       project: { list: async () => ({ data: [project] }) },
       session: { list: async () => Promise.reject(new Error('offline')) },
     })

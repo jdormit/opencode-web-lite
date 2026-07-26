@@ -63,12 +63,12 @@ describe('NotificationStore', () => {
   test('deduplicates events and bounds retained entries', () => {
     let now = 1_000
     const store = new NotificationStore('server_1', () => now)
-    const errors = Array.from({ length: 110 }, (_, index) =>
+    const errors = Array.from({ length: 510 }, (_, index) =>
       event('session.error', `error_${index}`, { sessionID: `ses_${index}` }))
     store.apply([...errors, errors.at(-1)!])
-    expect(store.getSnapshot().entries).toHaveLength(100)
+    expect(store.getSnapshot().entries).toHaveLength(500)
     expect(store.getSnapshot().entries[0]?.sessionID).toBe('ses_10')
-    now += 8 * 24 * 60 * 60_000
+    now += 31 * 24 * 60 * 60_000
     store.apply([event('session.error', 'new', { sessionID: 'ses_new' })])
     expect(store.getSnapshot().entries.map((entry) => entry.sessionID)).toEqual(['ses_new'])
   })

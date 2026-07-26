@@ -11,6 +11,12 @@ export type ServerConnection = PublicServerConnection & {
   password?: string
 }
 
+export type ConnectionRegistry = Readonly<{
+  defaultKey: string
+  list(): ServerConnection[]
+  resolve(serverKey: string): ServerConnection
+}>
+
 type ProbeOptions = Readonly<{
   fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
   timeoutMs?: number
@@ -45,6 +51,24 @@ export function getDefaultConnection(
       ? { password: password ?? '', username: username || 'opencode' }
       : {}),
   }
+}
+
+export function createConnectionRegistry(
+  env: Record<string, string | undefined> = process.env,
+): ConnectionRegistry {
+  const connection = getDefaultConnection(env)
+  return {
+    defaultKey: connection.key,
+    list: () => [connection],
+    resolve: (serverKey) => {
+      if (serverKey !== connection.key) throw new Error('Unknown server')
+      return connection
+    },
+  }
+}
+
+export function resolveConnection(serverKey: string): ServerConnection {
+  return createConnectionRegistry().resolve(serverKey)
 }
 
 export function createSdkForConnection(

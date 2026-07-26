@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { getDefaultConnection } from './src/server/connections.server'
+import { resolveConnection } from './src/server/connections.server'
 
 type StartHandler = {
   fetch(request: Request): Response | Promise<Response>
@@ -37,7 +37,7 @@ type Asset = {
 const defaultClientDirectory = './dist/client'
 const defaultServerEntryPoint = './dist/server/server.js'
 const websocketProbePath = '/__foundation/websocket'
-const ptyConnectPath = /^\/api\/opencode\/pty\/([A-Za-z0-9_-]{1,128})\/connect$/
+const ptyConnectPath = /^\/api\/opencode\/server\/([A-Za-z0-9_-]{1,128})\/pty\/([A-Za-z0-9_-]{1,128})\/connect$/
 const maximumPendingPtyBytes = 64 * 1024
 const maximumPtyFrameBytes = 64 * 1024
 const maximumPtyBackpressureBytes = 1024 * 1024
@@ -81,7 +81,7 @@ export async function startProductionServer(options: HostOptions = {}) {
           : new Response('WebSocket upgrade failed', { status: 400 })
       }
 
-      if (url.pathname.startsWith('/api/opencode/pty/') && url.pathname.endsWith('/connect')) {
+      if (ptyConnectPath.test(url.pathname)) {
         const upgrade = preparePtyUpgrade(request)
         if (upgrade instanceof Response) return upgrade
         return bunServer.upgrade(request, { data: upgrade })
@@ -174,11 +174,11 @@ function preparePtyUpgrade(request: Request): Extract<SocketData, { kind: 'pty-p
 
   let connection
   try {
-    connection = getDefaultConnection()
+    connection = resolveConnection(match[1]!)
   } catch {
     return new Response('Invalid OpenCode server configuration', { status: 503 })
   }
-  const upstreamUrl = new URL(`/pty/${encodeURIComponent(match[1]!)}/connect`, connection.url)
+  const upstreamUrl = new URL(`/pty/${encodeURIComponent(match[2]!)}/connect`, connection.url)
   upstreamUrl.protocol = upstreamUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   upstreamUrl.searchParams.set('ticket', ticket)
   if (directory) upstreamUrl.searchParams.set('directory', directory)

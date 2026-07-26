@@ -93,7 +93,7 @@ export class GlobalEventStream {
     )
 
     try {
-      const response = await this.fetcher('/api/opencode/global/event', {
+      const response = await this.fetcher(`/api/opencode/server/${encodeURIComponent(this.serverKey)}/global/event`, {
         headers: { Accept: 'text/event-stream' },
         signal: controller.signal,
       })

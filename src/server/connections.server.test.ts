@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 
-import { getDefaultConnection, probeConnection } from './connections.server'
+import { createConnectionRegistry, getDefaultConnection, probeConnection } from './connections.server'
 
 describe('getDefaultConnection', () => {
+  test('resolves only the exact registered server key', () => {
+    const registry = createConnectionRegistry({ OPENCODE_SERVER_URL: 'https://code.example' })
+    const connection = registry.list()[0]!
+    expect(registry.defaultKey).toBe(connection.key)
+    expect(registry.resolve(connection.key)).toEqual(connection)
+    expect(() => registry.resolve('server_other')).toThrow('Unknown server')
+  })
+
   test('normalizes the default server and creates a stable non-secret key', () => {
     const first = getDefaultConnection({})
     const second = getDefaultConnection({ OPENCODE_SERVER_URL: 'http://localhost:4096/' })

@@ -12,6 +12,17 @@ const connection: ServerConnection = {
 }
 
 describe('proxyOpenCodeRequest', () => {
+  test('requires a keyed path to match the resolved connection', async () => {
+    let fetched = false
+    const response = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/server/server_other/session'),
+      'session',
+      { serverKey: 'server_other', connection, fetch: async () => { fetched = true; return new Response() } },
+    )
+    expect(response.status).toBe(404)
+    expect(fetched).toBe(false)
+  })
+
   test('forwards an allowed request with only server-held authorization', async () => {
     let upstreamUrl = ''
     let upstreamHeaders = new Headers()

@@ -13,8 +13,8 @@ import type { SessionSnapshot } from '~/lib/session-snapshot'
 import { parseRouteIdentity } from '~/lib/identity'
 import { getLiveStore } from '~/lib/live-store'
 import { applyLiveSessionEvents } from '~/lib/live-session'
-import { appendPromptContext } from '~/lib/prompt-context'
 import { getNotificationStore } from '~/lib/notifications'
+import { appendPromptContext } from '~/lib/prompt-context'
 
 const SessionTerminal = lazy(() =>
   import('~/components/session-terminal').then((module) => ({
@@ -43,7 +43,7 @@ export const Route = createFileRoute('/server/$serverKey/session/$sessionId')({
     const liveRevision = typeof window === 'undefined'
       ? 0
       : getLiveStore(params.serverKey).getSnapshot().revision
-    const composer = await getComposerOptions({ data: { directory: snapshot.directory } }).catch(
+    const composer = await getComposerOptions({ data: { serverKey: params.serverKey, directory: snapshot.directory } }).catch(
       () => ({ agents: [], models: [] }),
     )
     return { snapshot, composer, liveRevision }
@@ -164,9 +164,8 @@ function SessionContextCollector({ serverKey, sessionId }: { serverKey: string; 
     const key = `opencode-web-lite:session-draft:v1:${serverKey}:${sessionId}`
     const collect = (event: Event) => {
       const text = (event as CustomEvent<{ text?: unknown }>).detail?.text
-      const current = (() => {
-        try { return localStorage.getItem(key) ?? '' } catch { return '' }
-      })()
+      let current = ''
+      try { current = localStorage.getItem(key) ?? '' } catch {}
       const result = appendPromptContext(current, text)
       if (!result.ok) {
         event.preventDefault()
@@ -177,6 +176,9 @@ function SessionContextCollector({ serverKey, sessionId }: { serverKey: string; 
       }
       try {
         localStorage.setItem(key, result.value)
+        window.dispatchEvent(new CustomEvent('opencode:draft-updated', {
+          detail: { key, value: result.value },
+        }))
         setStatus('Context added to the prompt draft.')
       } catch {
         event.preventDefault()
@@ -186,7 +188,7 @@ function SessionContextCollector({ serverKey, sessionId }: { serverKey: string; 
     window.addEventListener('opencode:add-context', collect)
     return () => window.removeEventListener('opencode:add-context', collect)
   }, [serverKey, sessionId])
-  return status ? <p className="sr-status" role="status">{status}</p> : null
+  return status ? <p role="status">{status}</p> : null
 }
 
 function TodoDock({ sessionId, snapshot }: { sessionId: string; snapshot: SessionSnapshot }) {

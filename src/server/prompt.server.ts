@@ -3,7 +3,7 @@ import type { ComposerOptions } from '~/lib/composer-options'
 
 import {
   createSdkForConnection,
-  getDefaultConnection,
+  resolveConnection,
   type ServerConnection,
 } from './connections.server'
 import { loadComposerOptions } from './composer-options.server'
@@ -39,7 +39,7 @@ export async function sendPrompt(
     modelID: string
     variant: string
   },
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(input.serverKey),
   client: PromptClient = createSdkForConnection(connection),
   composerOptions?: ComposerOptions,
 ) {
@@ -59,7 +59,7 @@ export async function sendPrompt(
   if (existing.data) return { accepted: true as const, existing: true as const }
   if (existing.response?.status !== 404)
     throw new Error('Existing message state could not be verified')
-  const options = composerOptions ?? (await loadComposerOptions(session.directory, connection))
+  const options = composerOptions ?? (await loadComposerOptions(input.serverKey, session.directory, connection))
   if (!options.agents.some((agent) => agent.name === input.agent))
     throw new Error('The selected agent is unavailable')
   const model = options.models.find(
@@ -84,7 +84,7 @@ export async function sendPrompt(
 
 export async function stopSession(
   input: { serverKey: string; sessionID: string },
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(input.serverKey),
   client: PromptClient = createSdkForConnection(connection),
 ) {
   if (input.serverKey !== connection.key) throw new Error('Unknown server')

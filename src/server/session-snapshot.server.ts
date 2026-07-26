@@ -3,7 +3,7 @@ import type { Config, Message, Part, PermissionRequest, QuestionRequest, Session
 import type { SessionFileDiff, SessionHistoryPage, SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
 import {
   createSdkForConnection,
-  getDefaultConnection,
+  resolveConnection,
   type ServerConnection,
 } from './connections.server'
 
@@ -41,7 +41,7 @@ export async function loadSessionFileDiff(
   sessionID: string,
   messageID: string,
   file: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: SessionClient = createSdkForConnection(connection, { fetch: boundedFetch, throwOnError: false }),
 ): Promise<SessionFileDiff | undefined> {
   if (serverKey !== connection.key) throw new Error('Unknown server')
@@ -61,7 +61,7 @@ export async function loadSessionFileDiff(
 export async function loadSessionSnapshot(
   serverKey: string,
   sessionID: string,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: SessionClient = createSdkForConnection(connection, {
     fetch: boundedFetch,
     throwOnError: false,
@@ -240,7 +240,7 @@ export async function loadSessionHistoryPage(
   sessionID: string,
   cursor: string,
   limit = 200,
-  connection: ServerConnection = getDefaultConnection(),
+  connection: ServerConnection = resolveConnection(serverKey),
   client: SessionClient = createSdkForConnection(connection, {
     fetch: boundedFetch,
     throwOnError: false,

@@ -71,10 +71,10 @@ export function SessionTerminal({
 
     void (async () => {
       try {
-        const running = await ptyRequest<PtyInfo[]>(directory, '/pty', { method: 'GET' })
+        const running = await ptyRequest<PtyInfo[]>(serverKey, directory, '/pty', { method: 'GET' })
         if (!current) return
         const reconciled = reconcileTerminals(restored.terminals, running)
-        const created = reconciled.length ? undefined : await createPty(directory, 'Terminal 1')
+        const created = reconciled.length ? undefined : await createPty(serverKey, directory, 'Terminal 1')
         if (!current) return
         setStore((previous) => {
           if (previous.key !== storageKey) return previous
@@ -125,9 +125,9 @@ export function SessionTerminal({
     setBusy(true)
     setError(undefined)
     try {
-      const running = await ptyRequest<PtyInfo[]>(directory, '/pty', { method: 'GET' })
+      const running = await ptyRequest<PtyInfo[]>(serverKey, directory, '/pty', { method: 'GET' })
       const reconciled = reconcileTerminals(store.state.terminals, running)
-      const created = reconciled.length ? undefined : await createPty(directory, 'Terminal 1')
+      const created = reconciled.length ? undefined : await createPty(serverKey, directory, 'Terminal 1')
       update((previous) => {
         const terminals = reconcileTerminals(previous.terminals, running)
         if (created && !terminals.some((item) => item.id === created.id)) {
@@ -151,7 +151,7 @@ export function SessionTerminal({
     setBusy(true)
     setError(undefined)
     try {
-      const pty = await createPty(directory, nextTerminalTitle(store.state.terminals))
+      const pty = await createPty(serverKey, directory, nextTerminalTitle(store.state.terminals))
       update((previous) => ({
         ...previous,
         terminals: [...previous.terminals, { id: pty.id, title: pty.title }],
@@ -172,7 +172,7 @@ export function SessionTerminal({
       const title =
         store.state.terminals.find((item) => item.id === id)?.title ??
         nextTerminalTitle(store.state.terminals)
-      const pty = await createPty(directory, title)
+      const pty = await createPty(serverKey, directory, title)
       update((previous) => ({
         ...previous,
         terminals: previous.terminals.map((item) =>
@@ -199,7 +199,7 @@ export function SessionTerminal({
       return { ...previous, terminals, ...(active ? { active } : {}) }
     })
     try {
-      await ptyRequest(directory, `/pty/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      await ptyRequest(serverKey, directory, `/pty/${encodeURIComponent(id)}`, { method: 'DELETE' })
     } catch {
       setError('The terminal closed here, but OpenCode did not confirm that it stopped.')
     }
@@ -214,7 +214,7 @@ export function SessionTerminal({
       terminals: previous.terminals.map((item) => (item.id === id ? { ...item, title } : item)),
     }))
     try {
-      await ptyRequest(directory, `/pty/${encodeURIComponent(id)}`, {
+      await ptyRequest(serverKey, directory, `/pty/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: JSON.stringify({ title }),
       })
@@ -311,6 +311,7 @@ export function SessionTerminal({
       <div className="terminal-stage">
         {active ? (
           <TerminalInstance
+            serverKey={serverKey}
             key={`${storageKey}:${active.id}`}
             storageKey={storageKey}
             directory={directory}
@@ -407,12 +408,14 @@ function TerminalTab({
 }
 
 function TerminalInstance({
+  serverKey,
   storageKey,
   directory,
   saved,
   onSync,
   onReplace,
 }: {
+  serverKey: string
   storageKey: string
   directory: string
   saved: SavedTerminal
@@ -495,7 +498,7 @@ function TerminalInstance({
     }
 
     const sendSize = () => {
-      void ptyRequest(directory, `/pty/${encodeURIComponent(saved.id)}`, {
+      void ptyRequest(serverKey, directory, `/pty/${encodeURIComponent(saved.id)}`, {
         method: 'PUT',
         body: JSON.stringify({ size: { cols: terminal.cols, rows: terminal.rows } }),
       }).catch(() => undefined)
@@ -526,7 +529,7 @@ function TerminalInstance({
     })
 
     const stillExists = async (): Promise<boolean | undefined> =>
-      ptyRequest(directory, `/pty/${encodeURIComponent(saved.id)}`, { method: 'GET' })
+      ptyRequest(serverKey, directory, `/pty/${encodeURIComponent(saved.id)}`, { method: 'GET' })
         .then(() => true)
         .catch((error: unknown) =>
           error instanceof PtyRequestError && error.status === 404 ? false : undefined,
@@ -559,6 +562,7 @@ function TerminalInstance({
       metadataPending = undefined
       try {
         const token = await ptyRequest<{ ticket: string }>(
+          serverKey,
           directory,
           `/pty/${encodeURIComponent(saved.id)}/connect-token`,
           { method: 'POST', headers: { 'x-opencode-ticket': '1' } },
@@ -566,7 +570,7 @@ function TerminalInstance({
         if (disposed) return
 
         const url = new URL(
-          `/api/opencode/pty/${encodeURIComponent(saved.id)}/connect`,
+          `/api/opencode/server/${encodeURIComponent(serverKey)}/pty/${encodeURIComponent(saved.id)}/connect`,
           location.origin,
         )
         url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -675,7 +679,7 @@ function TerminalInstance({
       terminal.write('', finish)
       setTimeout(finish, 50)
     }
-  }, [saved.id, directory, storageKey])
+  }, [saved.id, directory, serverKey, storageKey])
 
   const recoverable = state === 'exited' || state === 'stale' || state === 'error'
 
@@ -698,19 +702,20 @@ function TerminalInstance({
   )
 }
 
-async function createPty(directory: string, title: string) {
-  return ptyRequest<PtyInfo>(directory, '/pty', {
+async function createPty(serverKey: string, directory: string, title: string) {
+  return ptyRequest<PtyInfo>(serverKey, directory, '/pty', {
     method: 'POST',
     body: JSON.stringify({ title }),
   })
 }
 
 async function ptyRequest<T = unknown>(
+  serverKey: string,
   directory: string,
   path: string,
   init: RequestInit,
 ): Promise<T> {
-  const url = new URL(`/api/opencode${path}`, location.origin)
+  const url = new URL(`/api/opencode/server/${encodeURIComponent(serverKey)}${path}`, location.origin)
   url.searchParams.set('directory', directory)
 
   const response = await fetch(url, {

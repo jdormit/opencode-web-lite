@@ -20,8 +20,8 @@ const defaults: NotificationPreferences = {
   error: false,
   sounds: { completion: false, request: false, error: false },
 }
-const maximumEntries = 100
-const maximumAge = 7 * 24 * 60 * 60_000
+const maximumEntries = 500
+const maximumAge = 30 * 24 * 60 * 60_000
 
 export class NotificationStore {
   private entries: SessionNotification[] = []

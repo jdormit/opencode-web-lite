@@ -28,8 +28,9 @@ describe('GlobalEventStream', () => {
         controller.close()
       },
     })
+    let requested = ''
     const stream = new GlobalEventStream('server_test', {
-      fetch: Object.assign(async () => new Response(body), { preconnect() {} }),
+      fetch: Object.assign(async (input: RequestInfo | URL) => { requested = String(input); return new Response(body) }, { preconnect() {} }),
     })
 
     const events = await new Promise<unknown[]>((resolve) => {
@@ -39,6 +40,7 @@ describe('GlobalEventStream', () => {
     stream.stop()
 
     expect(events).toEqual([{ type: 'one' }, { type: 'two' }])
+    expect(requested).toBe('/api/opencode/server/server_test/global/event')
   })
 
   test('uses exponential full-jitter reconnect timing', async () => {

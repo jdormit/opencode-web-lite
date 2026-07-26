@@ -12,7 +12,7 @@ const connection: ServerConnection = {
 
 describe('loadComposerOptions', () => {
   test('preserves eligible agent order and connected non-deprecated models', async () => {
-    const project = { id: 'p1', worktree: '/work/a' } as Project
+    const project = { id: 'p1', worktree: '/work/a', sandboxes: ['/work/sandbox'] } as Project
     const agents = [
       { name: 'plan', mode: 'primary', permission: [], options: {} },
       { name: 'helper', mode: 'subagent', permission: [], options: {} },
@@ -31,7 +31,8 @@ describe('loadComposerOptions', () => {
       { id: 'offline', name: 'Offline', models: { model: { id: 'model', name: 'Model', status: 'active' } } },
     ] as unknown as Provider[]
     const options = await loadComposerOptions(
-      '/work/a',
+      'server_test',
+      '/work/sandbox',
       connection,
       { project: { list: async () => ({ data: [project] }) } } as never,
       {

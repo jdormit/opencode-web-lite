@@ -3,7 +3,7 @@ import type { Project, Session } from '@opencode-ai/sdk/v2/client'
 import type { HomeIndex } from '~/lib/home-index'
 import {
   createSdkForConnection,
-  getDefaultConnection,
+  resolveConnection,
   type ServerConnection,
 } from './connections.server'
 
@@ -22,9 +22,11 @@ type HomeClient = {
 const homeLimit = 64
 
 export async function loadHomeIndex(
-  connection: ServerConnection = getDefaultConnection(),
+  serverKey: string,
+  connection: ServerConnection = resolveConnection(serverKey),
   client: HomeClient = createSdkForConnection(connection),
 ): Promise<HomeIndex> {
+  if (serverKey !== connection.key) throw new Error('Unknown server')
   const signal = AbortSignal.timeout(650)
   const [projectResult, sessionResult] = await Promise.allSettled([
     client.project.list(undefined, { signal }),
@@ -37,6 +39,9 @@ export async function loadHomeIndex(
     id: project.id,
     name: project.name?.trim() || directoryName(project.worktree),
     directory: project.worktree,
+    worktrees: [project.worktree, ...project.sandboxes.filter((directory) => directory !== project.worktree)]
+      .slice(0, 32)
+      .map((directory) => ({ directory, current: directory === project.worktree })),
   }))
   const sessions = (sessionData ?? [])
     .filter((session) => !session.parentID && !session.time.archived)

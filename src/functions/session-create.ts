@@ -7,6 +7,7 @@ export const createSessionMutation = createServerFn({ method: 'POST' })
     if (
       typeof data !== 'object' ||
       data === null ||
+      !('serverKey' in data) || typeof data.serverKey !== 'string' ||
       !('directory' in data) ||
       typeof data.directory !== 'string' ||
       !('title' in data) || typeof data.title !== 'string' ||
@@ -18,6 +19,7 @@ export const createSessionMutation = createServerFn({ method: 'POST' })
       throw new Error('Invalid session input')
     }
     return {
+      serverKey: data.serverKey,
       directory: data.directory,
       title: data.title,
       agent: data.agent,

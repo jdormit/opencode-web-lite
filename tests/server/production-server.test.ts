@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { startProductionServer } from '../../server'
+import { getDefaultConnection } from '../../src/server/connections.server'
 
 let server: Awaited<ReturnType<typeof startProductionServer>>
 let upstream: ReturnType<typeof Bun.serve>
 let origin: string
+let apiPrefix: string
 let terminalTokenAuthorized = false
 let terminalSocketAuthorized = false
 let terminalTicketConsumed = false
@@ -61,6 +63,7 @@ beforeAll(async () => {
   })
   process.env.OPENCODE_SERVER_URL = `http://127.0.0.1:${upstream.port}`
   process.env.OPENCODE_SERVER_PASSWORD = 'server-secret'
+  apiPrefix = `/api/opencode/server/${getDefaultConnection().key}`
   server = await startProductionServer({
     port: 0,
     enableWebSocketProbe: true,
@@ -154,7 +157,7 @@ describe('production Bun host', () => {
 
   test('bridges a ticket-authenticated terminal WebSocket', async () => {
     const tokenResponse = await fetch(
-      `${origin}/api/opencode/pty/pty_test/connect-token?workspace=workspace_test`,
+      `${origin}${apiPrefix}/pty/pty_test/connect-token?workspace=workspace_test`,
       {
         method: 'POST',
         headers: { Origin: origin, 'x-opencode-ticket': '1' },
@@ -171,7 +174,7 @@ describe('production Bun host', () => {
       ) => WebSocket
       const socket = new WebSocketWithHeaders(
         origin.replace('http:', 'ws:') +
-          `/api/opencode/pty/pty_test/connect?workspace=workspace_test&ticket=${token.ticket}`,
+          `${apiPrefix}/pty/pty_test/connect?workspace=workspace_test&ticket=${token.ticket}`,
         { headers: { Origin: origin } },
       )
       const received: string[] = []
@@ -198,7 +201,7 @@ describe('production Bun host', () => {
 
   test('rejects terminal WebSockets without the same-origin header', async () => {
     const response = await fetch(
-      `${origin}/api/opencode/pty/pty_test/connect?ticket=one-use-ticket`,
+      `${origin}${apiPrefix}/pty/pty_test/connect?ticket=one-use-ticket`,
       { headers: { Upgrade: 'websocket' } },
     )
     expect(response.status).toBe(403)
@@ -206,7 +209,7 @@ describe('production Bun host', () => {
 
   test('rejects ambiguous terminal upgrade queries', async () => {
     const response = await fetch(
-      `${origin}/api/opencode/pty/pty_test/connect?ticket=one&ticket=two`,
+      `${origin}${apiPrefix}/pty/pty_test/connect?ticket=one&ticket=two`,
       { headers: { Origin: origin, Upgrade: 'websocket' } },
     )
     expect(response.status).toBe(400)
@@ -223,7 +226,7 @@ describe('production Bun host', () => {
   })
 
   test('proxies an allowlisted OpenCode route with server credentials', async () => {
-    const response = await fetch(`${origin}/api/opencode/global/health`, {
+    const response = await fetch(`${origin}${apiPrefix}/global/health`, {
       headers: { Authorization: 'Bearer browser-secret' },
     })
 

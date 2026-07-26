@@ -30,6 +30,7 @@ describe('createSession', () => {
     let parameters: unknown
     const result = await createSession(
       {
+        serverKey: 'server_test',
         directory: '/work/alpha',
         title: ' Fix tests ',
         agent: 'build',
@@ -65,11 +66,27 @@ describe('createSession', () => {
   test('rejects directories not returned by the server', async () => {
     expect(
       createSession({
-        directory: '/tmp/other', title: '', agent: 'build', providerID: 'provider', modelID: 'model', variant: '',
+        serverKey: 'server_test', directory: '/tmp/other', title: '', agent: 'build', providerID: 'provider', modelID: 'model', variant: '',
       }, connection, {
         project: { list: async () => ({ data: [project] }) },
         session: { create: async () => ({ data: session }) },
       }),
     ).rejects.toThrow('no longer available')
+  })
+
+  test('creates a session in an existing project sandbox', async () => {
+    let directory = ''
+    const sandboxProject = { ...project, sandboxes: ['/work/alpha-feature'] }
+    await createSession({
+      serverKey: 'server_test', directory: '/work/alpha-feature', title: '', agent: 'build',
+      providerID: 'provider', modelID: 'model', variant: '',
+    }, connection, {
+      project: { list: async () => ({ data: [sandboxProject] }) },
+      session: { create: async (input) => { directory = input.directory; return { data: session } } },
+    }, {
+      agents: [{ name: 'build' }],
+      models: [{ providerID: 'provider', providerName: 'Provider', modelID: 'model', name: 'Model', variants: [] }],
+    })
+    expect(directory).toBe('/work/alpha-feature')
   })
 })

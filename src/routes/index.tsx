@@ -3,13 +3,15 @@ import { useEffect, useState } from 'react'
 
 import { PageIntro } from '~/components/page-intro'
 import { getHomeIndex } from '~/functions/home-index'
+import { getConnectionSnapshot } from '~/functions/connections'
 import { strings } from '~/lib/strings'
 import { getNotificationStore } from '~/lib/notifications'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
     try {
-      return await getHomeIndex()
+      const connection = await getConnectionSnapshot()
+      return await getHomeIndex({ data: { serverKey: connection.server.key } })
     } catch {
       return {
         projects: [],

@@ -54,7 +54,7 @@ function NotificationSettings({ serverKey }: { serverKey: string }) {
   return <article className="notification-settings">
     <p className="eyebrow">Notifications</p>
     <h2>Session alerts</h2>
-    <p>Alerts are stored in this browser for up to seven days. System notifications are opt-in.</p>
+    <p>Alerts are stored in this browser for up to 30 days. System notifications are opt-in.</p>
     {(['completion', 'request', 'error'] as const).map((kind) => <fieldset key={kind}>
       <legend>{kind === 'completion' ? 'Completions' : kind === 'request' ? 'Permissions and questions' : 'Errors'}</legend>
       <label><input type="checkbox" checked={preferences[kind]} onChange={(event) => void setSystem(kind, event.target.checked)} /> System notification</label>

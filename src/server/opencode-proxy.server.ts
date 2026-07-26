@@ -1,10 +1,12 @@
 import {
   getDefaultConnection,
+  resolveConnection,
   type ServerConnection,
 } from './connections.server'
 
 type ProxyOptions = Readonly<{
   connection?: ServerConnection
+  serverKey?: string
   fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 }>
 
@@ -77,14 +79,21 @@ export async function proxyOpenCodeRequest(
     return new Response('Cross-origin request rejected', { status: 403 })
   }
 
-  const path = validatePath(request, splat)
+  const path = validatePath(request, splat, options.serverKey)
   if (!path) return new Response('Unsupported OpenCode path', { status: 404 })
 
   let connection: ServerConnection
   try {
-    connection = options.connection ?? getDefaultConnection()
+    connection = options.connection ?? (options.serverKey
+      ? resolveConnection(options.serverKey)
+      : getDefaultConnection())
+    if (options.serverKey && connection.key !== options.serverKey) {
+      return new Response('Unknown OpenCode server', { status: 404 })
+    }
   } catch {
-    return new Response('Invalid OpenCode server configuration', { status: 503 })
+    return new Response(options.serverKey ? 'Unknown OpenCode server' : 'Invalid OpenCode server configuration', {
+      status: options.serverKey ? 404 : 503,
+    })
   }
 
   const incomingUrl = new URL(request.url)
@@ -129,12 +138,15 @@ export async function proxyOpenCodeRequest(
 function validatePath(
   request: Request,
   splat: string | undefined,
+  serverKey?: string,
 ): string | undefined {
   if (!splat) return undefined
   if (splat.split('/').some((segment) => segment === '.' || segment === '..'))
     return undefined
 
-  const prefix = '/api/opencode/'
+  const prefix = serverKey
+    ? `/api/opencode/server/${encodeURIComponent(serverKey)}/`
+    : '/api/opencode/'
   const pathname = new URL(request.url).pathname
   if (!pathname.startsWith(prefix)) return undefined
   const rawPath = pathname.slice(prefix.length)
