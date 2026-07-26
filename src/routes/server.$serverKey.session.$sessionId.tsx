@@ -6,21 +6,28 @@ import { getComposerOptions } from '~/functions/composer-options'
 import { SessionComposer } from '~/components/session-composer'
 import { SessionRequests } from '~/components/session-requests'
 import { SessionTimeline } from '~/components/session-timeline'
+import { SessionChanges } from '~/components/session-changes'
 import { strings } from '~/lib/strings'
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import { parseRouteIdentity } from '~/lib/identity'
 import { getLiveStore } from '~/lib/live-store'
 import { applyLiveSessionEvents } from '~/lib/live-session'
+import { appendPromptContext } from '~/lib/prompt-context'
 
 const SessionTerminal = lazy(() =>
   import('~/components/session-terminal').then((module) => ({
     default: module.SessionTerminal,
   })),
 )
+const SessionFiles = lazy(() =>
+  import('~/components/session-files').then((module) => ({ default: module.SessionFiles })),
+)
 
 export const Route = createFileRoute('/server/$serverKey/session/$sessionId')({
-  validateSearch: (search: Record<string, unknown>): { view?: 'changes' | 'terminal' } =>
-    search.view === 'changes' || search.view === 'terminal' ? { view: search.view } : {},
+  validateSearch: (search: Record<string, unknown>): { view?: 'changes' | 'files' | 'terminal' } =>
+    search.view === 'changes' || search.view === 'files' || search.view === 'terminal'
+      ? { view: search.view }
+      : {},
   beforeLoad: ({ params }) => {
     if (!parseRouteIdentity(params)) {
       throw notFound()
@@ -89,6 +96,7 @@ function Session() {
         <Link to="." search={{ view: 'changes' }} aria-current={view === 'changes' ? 'page' : undefined}>
           Changes {snapshot.changesTotal ? `(${snapshot.changesTotal})` : ''}
         </Link>
+        <Link to="." search={{ view: 'files' }} aria-current={view === 'files' ? 'page' : undefined}>Files</Link>
         <Link to="." search={{ view: 'terminal' }} aria-current={view === 'terminal' ? 'page' : undefined}>Terminal</Link>
       </nav>
       <SessionRequests
@@ -99,6 +107,7 @@ function Session() {
         question={snapshot.question}
         unavailable={snapshot.requestsUnavailable}
       />
+      <SessionContextCollector serverKey={serverKey} sessionId={sessionId} />
       {view === 'chat' ? <>
       {snapshot.todosUnavailable ? <p className="history-note">Todos are temporarily unavailable.</p> : null}
       {snapshot.todos.length ? <TodoDock sessionId={sessionId} snapshot={snapshot} /> : null}
@@ -112,26 +121,46 @@ function Session() {
         blocked={Boolean(snapshot.permission || snapshot.question || snapshot.requestsUnavailable)}
       />
       </> : view === 'changes' ? (
-        <section className="changes-view" aria-labelledby="changes-heading">
-          <h2 id="changes-heading">Changed files</h2>
-          {snapshot.changesLimited ? <p className="history-note">Showing the first 40 changed files.</p> : null}
-          {!snapshot.changes.length ? <p className="empty-copy">No session changes.</p> : null}
-          {snapshot.changes.map((change) => (
-            <details key={change.file}>
-              <summary><strong>{change.file}</strong><span>{change.status} / +{change.additions} -{change.deletions}</span></summary>
-              {change.patch ? <>
-                {change.patchLimited ? <p className="history-note">This patch is truncated.</p> : null}
-                <pre><code>{change.patch}</code></pre>
-              </> : <p>{change.patchOmitted ? 'Patch omitted from the initial bounded view.' : 'Patch content is unavailable.'}</p>}
-            </details>
-          ))}
-        </section>
+        <SessionChanges key={`${serverKey}:${sessionId}:${snapshot.changeMessageId ?? ''}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} />
+      ) : view === 'files' ? (
+        <Suspense fallback={<p>Loading files...</p>}><SessionFiles key={`${serverKey}:${sessionId}`} serverKey={serverKey} sessionId={sessionId} /></Suspense>
       ) : <Suspense fallback={<p>Loading terminal...</p>}><SessionTerminal serverKey={serverKey} directory={snapshot.directory} /></Suspense>}
       <footer className="session-identity">
         <span>{serverKey}</span><span>{sessionId}</span>
       </footer>
     </main>
   )
+}
+
+function SessionContextCollector({ serverKey, sessionId }: { serverKey: string; sessionId: string }) {
+  const [status, setStatus] = useState<string>()
+  useEffect(() => {
+    const key = `opencode-web-lite:session-draft:v1:${serverKey}:${sessionId}`
+    const collect = (event: Event) => {
+      const text = (event as CustomEvent<{ text?: unknown }>).detail?.text
+      const current = (() => {
+        try { return localStorage.getItem(key) ?? '' } catch { return '' }
+      })()
+      const result = appendPromptContext(current, text)
+      if (!result.ok) {
+        event.preventDefault()
+        setStatus(result.reason === 'context-limit'
+          ? 'Context was not added because it exceeds the 32,000-character limit.'
+          : 'Context was not added because the prompt would exceed its limit.')
+        return
+      }
+      try {
+        localStorage.setItem(key, result.value)
+        setStatus('Context added to the prompt draft.')
+      } catch {
+        event.preventDefault()
+        setStatus('Context could not be saved to the prompt draft.')
+      }
+    }
+    window.addEventListener('opencode:add-context', collect)
+    return () => window.removeEventListener('opencode:add-context', collect)
+  }, [serverKey, sessionId])
+  return status ? <p className="sr-status" role="status">{status}</p> : null
 }
 
 function TodoDock({ sessionId, snapshot }: { sessionId: string; snapshot: SessionSnapshot }) {

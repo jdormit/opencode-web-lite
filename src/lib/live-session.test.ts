@@ -8,6 +8,7 @@ const snapshot: SessionSnapshot = {
   id: 'ses_1', title: 'Session', directory: '/work', items: [], removedMessageIds: [], hasOlder: false,
   busy: false, requestsUnavailable: false, todos: [], todosLimited: false,
   todosUnavailable: false, changes: [], changesLimited: false, changesTotal: 0,
+  changesAdditions: 0, changesDeletions: 0,
 }
 
 function event(type: string, properties: Record<string, unknown>, observedAt: number): NormalizedGlobalEvent {

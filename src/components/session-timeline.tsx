@@ -1,10 +1,11 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import { getSessionHistoryPage } from '~/functions/session-snapshot'
 import type { SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
+
+const SessionMarkdown = lazy(() =>
+  import('./session-markdown').then((module) => ({ default: module.SessionMarkdown })),
+)
 
 export function SessionTimeline({
   serverKey,
@@ -174,15 +175,7 @@ function TimelineMessage({ item }: { item: SessionTimelineItem }) {
       {item.parts.map((part) => {
         if (part.type === 'text') {
           return <div className="message-markdown" key={part.id}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ href, children }) => <SafeLink href={href}>{children}</SafeLink>,
-                img: ({ alt }) => <span>[Image omitted: {alt ?? 'no description'}]</span>,
-                h1: ({ children }) => <h3>{children}</h3>,
-                h2: ({ children }) => <h3>{children}</h3>,
-              }}
-            >{part.text}</ReactMarkdown>
+            <Suspense fallback={<p>{part.text}</p>}><SessionMarkdown text={part.text} /></Suspense>
             {part.limited ? <p className="content-limit">This message is truncated at 100,000 characters.</p> : null}
           </div>
         }
@@ -208,21 +201,6 @@ function ToolDetail({ part }: {
       {part.error ? <pre className="message-error"><code>{part.error}</code></pre> : null}
     </> : null}
   </details>
-}
-
-function SafeLink({ href, children }: { href: string | undefined; children: ReactNode }) {
-  if (!href) return <span>{children}</span>
-  let url: URL
-  try {
-    url = new URL(href, 'https://opencode-web-lite.invalid')
-  } catch {
-    return <span>{children}</span>
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') {
-    return <span>{children}</span>
-  }
-  const external = url.origin !== 'https://opencode-web-lite.invalid' && url.protocol !== 'mailto:'
-  return <a href={href} {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>{children}</a>
 }
 
 function mergeMessages(first: SessionTimelineItem[], second: SessionTimelineItem[]) {

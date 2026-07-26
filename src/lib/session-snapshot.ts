@@ -27,6 +27,8 @@ export type SessionHistoryPage = {
   complete: boolean
 }
 
+export type SessionFileDiff = { file: string; patch: string; limited: boolean }
+
 export type SessionSnapshot = {
   id: string
   title: string
@@ -71,4 +73,7 @@ export type SessionSnapshot = {
   }>
   changesLimited: boolean
   changesTotal: number
+  changesAdditions: number
+  changesDeletions: number
+  changeMessageId?: string
 }

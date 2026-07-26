@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Message, Part, Session } from '@opencode-ai/sdk/v2/client'
 
 import type { ServerConnection } from './connections.server'
-import { loadSessionHistoryPage, loadSessionSnapshot } from './session-snapshot.server'
+import { loadSessionFileDiff, loadSessionHistoryPage, loadSessionSnapshot } from './session-snapshot.server'
 
 const connection: ServerConnection = {
   key: 'server_test',
@@ -153,5 +153,30 @@ describe('loadSessionSnapshot', () => {
     expect(page.items.map((item) => item.id)).toEqual(['msg_old'])
     expect(page.cursor).toBe('next_cursor')
     expect(page.complete).toBe(false)
+  })
+
+  test('loads a detailed diff for the exact displayed turn', async () => {
+    const session = {
+      id: 'ses_1', slug: 'one', projectID: 'project_1', directory: '/work/alpha',
+      title: 'Diff', version: '1.18.4', time: { created: 1, updated: 2 },
+    } satisfies Session
+    let parameters: unknown
+    const detail = await loadSessionFileDiff(
+      'server_test', 'ses_1', 'msg_turn', 'src/app.ts', connection,
+      {
+        session: {
+          get: async () => ({ data: session }),
+          messages: async () => ({ data: [] }),
+          diff: async (value) => {
+            parameters = value
+            return { data: [{ file: 'src/app.ts', additions: 1, deletions: 0, status: 'modified', patch: '@@ exact turn' }] }
+          },
+        },
+      },
+    )
+    expect(parameters).toEqual({
+      sessionID: 'ses_1', directory: '/work/alpha', messageID: 'msg_turn',
+    })
+    expect(detail).toEqual({ file: 'src/app.ts', patch: '@@ exact turn', limited: false })
   })
 })

@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { loadSessionHistoryPage, loadSessionSnapshot } from '~/server/session-snapshot.server'
+import { loadSessionFileDiff, loadSessionHistoryPage, loadSessionSnapshot } from '~/server/session-snapshot.server'
 import { parseRouteIdentity } from '~/lib/identity'
 
 export const getSessionSnapshot = createServerFn({ method: 'GET' })
@@ -25,4 +25,21 @@ export const getSessionHistoryPage = createServerFn({ method: 'GET' })
   })
   .handler(({ data }) =>
     loadSessionHistoryPage(data.serverKey, data.sessionID, data.cursor, data.limit),
+  )
+
+export const getSessionFileDiff = createServerFn({ method: 'GET' })
+  .validator((data: { serverKey: string; sessionID: string; messageID: string; file: string }) => {
+    if (!parseRouteIdentity({ serverKey: data.serverKey, sessionId: data.sessionID })) {
+      throw new Error('Invalid session identity')
+    }
+    if (!data.file || data.file.length > 2_000 || data.file.includes('\0')) {
+      throw new Error('Invalid diff file')
+    }
+    if (!parseRouteIdentity({ serverKey: data.serverKey, sessionId: data.messageID })) {
+      throw new Error('Invalid message identity')
+    }
+    return data
+  })
+  .handler(({ data }) =>
+    loadSessionFileDiff(data.serverKey, data.sessionID, data.messageID, data.file),
   )

@@ -1,6 +1,6 @@
-import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, Todo } from '@opencode-ai/sdk/v2/client'
+import type { Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, SnapshotFileDiff, Todo } from '@opencode-ai/sdk/v2/client'
 
-import type { SessionHistoryPage, SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
+import type { SessionFileDiff, SessionHistoryPage, SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
 import {
   createSdkForConnection,
   getDefaultConnection,
@@ -29,9 +29,32 @@ type SessionClient = {
       options?: { signal?: AbortSignal },
     ): Promise<{ data: Session[] | undefined }>
     todo?(parameters: { sessionID: string; directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: Todo[] | undefined }>
+    diff?(parameters: { sessionID: string; directory: string; messageID: string }, options?: { signal?: AbortSignal }): Promise<{ data: SnapshotFileDiff[] | undefined }>
   }
   permission?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: PermissionRequest[] | undefined }> }
   question?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: QuestionRequest[] | undefined }> }
+}
+
+export async function loadSessionFileDiff(
+  serverKey: string,
+  sessionID: string,
+  messageID: string,
+  file: string,
+  connection: ServerConnection = getDefaultConnection(),
+  client: SessionClient = createSdkForConnection(connection, { fetch: boundedFetch, throwOnError: false }),
+): Promise<SessionFileDiff | undefined> {
+  if (serverKey !== connection.key) throw new Error('Unknown server')
+  if (!file || file.length > 2_000 || file.includes('\0')) throw new Error('Invalid diff file')
+  const signal = AbortSignal.timeout(2_500)
+  const sessionResult = await client.session.get({ sessionID }, { signal })
+  if (!sessionResult.data) throw new Error('Session could not be loaded')
+  if (!client.session.diff) throw new Error('Detailed diffs are unavailable')
+  const diffs = (await client.session.diff({
+    sessionID, directory: sessionResult.data.directory, messageID,
+  }, { signal })).data ?? []
+  const match = diffs.find((diff) => diff.file === file)
+  if (!match?.patch) return undefined
+  return { file, patch: match.patch.slice(0, 512 * 1024), limited: match.patch.length > 512 * 1024 }
 }
 
 export async function loadSessionSnapshot(
@@ -78,7 +101,8 @@ export async function loadSessionSnapshot(
   if (!messageResult.data) throw new Error('Session messages could not be loaded')
   const messages = messageResult.data
   const visible = messages.slice(-20)
-  const currentTurnSummary = [...messages].reverse().find(({ info }) => info.role === 'user')?.info.summary
+  const currentTurnMessage = [...messages].reverse().find(({ info }) => info.role === 'user')?.info
+  const currentTurnSummary = currentTurnMessage?.summary
   const currentTurnDiffs = currentTurnSummary && typeof currentTurnSummary === 'object'
     ? currentTurnSummary.diffs
     : []
@@ -135,6 +159,15 @@ export async function loadSessionSnapshot(
     })),
     changesLimited: currentTurnDiffs.filter((diff) => Boolean(diff.file)).length > 40,
     changesTotal: currentTurnDiffs.filter((diff) => Boolean(diff.file)).length,
+    changesAdditions: currentTurnDiffs.reduce(
+      (sum, diff) => sum + (Number.isFinite(diff.additions) ? diff.additions : 0),
+      0,
+    ),
+    changesDeletions: currentTurnDiffs.reduce(
+      (sum, diff) => sum + (Number.isFinite(diff.deletions) ? diff.deletions : 0),
+      0,
+    ),
+    ...(currentTurnMessage ? { changeMessageId: currentTurnMessage.id } : {}),
     ...projectPermission(permission),
     ...projectQuestion(question),
     items: visible.map(projectMessage),
