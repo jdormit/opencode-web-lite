@@ -1,14 +1,19 @@
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import { findSessionFiles, getSessionFile, getSessionFiles } from '~/functions/files'
 import { FilePreviewCache, type FileEntry, type FilePreview } from '~/lib/files'
 import { promptContextID } from '~/lib/prompt-context'
+import { closeFileTab, getFileWorkspace, openFileTab, pinFileTab, reorderFileTab } from '~/lib/file-workspace'
+import { writePersistentValue } from '~/lib/persistence'
 
 const previewCache = new FilePreviewCache()
 
-export function SessionFiles({ serverKey, sessionId }: { serverKey: string; sessionId: string }) {
+export function SessionFiles({ serverKey, sessionId, workspaceDirectory, changedPaths = {} }: { serverKey: string; sessionId: string; workspaceDirectory: string; changedPaths?: Record<string, string> }) {
+  const workspace = getFileWorkspace(serverKey, workspaceDirectory)
+  const workspaceState = useSyncExternalStore(workspace.subscribe, workspace.getSnapshot, workspace.getServerSnapshot)
   const [directory, setDirectory] = useState('')
   const [entries, setEntries] = useState<FileEntry[]>([])
+  const [tree, setTree] = useState<Record<string, FileEntry[]>>({})
   const [listLimited, setListLimited] = useState(false)
   const [selected, setSelected] = useState<FilePreview>()
   const [query, setQuery] = useState('')
@@ -28,6 +33,7 @@ export function SessionFiles({ serverKey, sessionId }: { serverKey: string; sess
       .then((value) => {
         if (listRequest.current !== id) return
         setEntries(value.entries)
+        setTree((current) => ({ ...current, [directory]: value.entries }))
         setListLimited(value.limited)
       })
       .catch(() => listRequest.current === id && setError('This directory could not be loaded.'))
@@ -55,6 +61,7 @@ export function SessionFiles({ serverKey, sessionId }: { serverKey: string; sess
     const cached = refresh ? undefined : previewCache.get(key)
     if (cached) {
       setSelected(cached)
+      workspace.update(openFileTab(workspace.getSnapshot(), path))
       return
     }
     setBusy(true)
@@ -64,12 +71,32 @@ export function SessionFiles({ serverKey, sessionId }: { serverKey: string; sess
       if (id !== openRequest.current) return
       previewCache.set(key, value)
       setSelected(value)
+      workspace.update(openFileTab(workspace.getSnapshot(), path))
     } catch {
       if (id === openRequest.current) setError('This file could not be previewed. It may be missing, too large, or inaccessible.')
     } finally {
       if (id === openRequest.current) setBusy(false)
     }
   }
+
+  async function toggleDirectory(path: string) {
+    const expanded = workspace.getSnapshot().expanded
+    if (expanded.includes(path)) {
+      workspace.update({ ...workspace.getSnapshot(), expanded: expanded.filter((item) => item !== path) })
+      return
+    }
+    workspace.update({ ...workspace.getSnapshot(), expanded: [...expanded, path].slice(-200) })
+    if (tree[path]) return
+    try {
+      const value = await getSessionFiles({ data: { serverKey, sessionID: sessionId, path } })
+      setTree((current) => ({ ...current, [path]: value.entries }))
+    } catch { setError(`The directory ${path} could not be loaded.`) }
+  }
+
+  useEffect(() => {
+    if (workspaceState.active && selected?.path !== workspaceState.active) void openFile(workspaceState.active)
+  // The active workspace tab is the source of truth when sessions switch.
+  }, [workspaceState.active])
 
   const segments = directory ? directory.split('/') : []
   return (
@@ -90,22 +117,28 @@ export function SessionFiles({ serverKey, sessionId }: { serverKey: string; sess
         })}
       </nav>
       <div className="file-workspace">
-        <ul className="file-list">
-          {entries.map((entry) => <li key={entry.path}>
-            <button type="button" onClick={() => entry.type === 'directory' ? setDirectory(entry.path) : void openFile(entry.path)}>
-              <span aria-hidden="true">{entry.type === 'directory' ? '/' : '#'}</span>
-              <span>{entry.name}</span><small>{entry.type}{entry.ignored ? ' / ignored' : ''}</small>
-            </button>
-          </li>)}
-        </ul>
+        <FileTree entries={tree[''] ?? entries} tree={tree} expanded={workspaceState.expanded} changedPaths={changedPaths} onDirectory={(path) => void toggleDirectory(path)} onOpen={(path) => void openFile(path)} />
         {listLimited ? <p className="history-note">Showing the first 200 entries.</p> : null}
-        {selected ? <FilePreviewPanel key={selected.path} storageKey={`opencode-web-lite:file-comments:v1:${serverKey}:${sessionId}:${selected.path}`} preview={selected} onRefresh={() => void openFile(selected.path, true)} /> : <p className="empty-copy">Choose a file to preview it.</p>}
+        <div className="file-editor">
+          {workspaceState.tabs.length ? <div className="file-tabs" role="tablist" aria-label="Open files">{workspaceState.tabs.map((tab) => <div key={tab.path}><button type="button" role="tab" aria-selected={workspaceState.active === tab.path} onClick={() => void openFile(tab.path)}>{tab.path}{tab.pinned ? '' : ' (preview)'}</button>{!tab.pinned ? <button type="button" onClick={() => workspace.update(pinFileTab(workspace.getSnapshot(), tab.path))}>Pin</button> : null}<button type="button" aria-label={`Move ${tab.path} left`} onClick={() => workspace.update(reorderFileTab(workspace.getSnapshot(), tab.path, -1))}>←</button><button type="button" aria-label={`Move ${tab.path} right`} onClick={() => workspace.update(reorderFileTab(workspace.getSnapshot(), tab.path, 1))}>→</button><button type="button" aria-label={`Close ${tab.path}`} onClick={() => workspace.update(closeFileTab(workspace.getSnapshot(), tab.path))}>×</button></div>)}</div> : null}
+          {selected ? <FilePreviewPanel key={selected.path} storageKey={`opencode-web-lite:file-comments:v1:${serverKey}:${workspaceDirectory}:${selected.path}`} preview={selected} initialScroll={workspaceState.tabs.find((tab) => tab.path === selected.path)?.scrollTop ?? 0} onScroll={(scrollTop) => workspace.update({ ...workspace.getSnapshot(), tabs: workspace.getSnapshot().tabs.map((tab) => tab.path === selected.path ? { ...tab, scrollTop } : tab) })} onRefresh={() => void openFile(selected.path, true)} /> : <p className="empty-copy">Choose a file to preview it.</p>}
+        </div>
       </div>
     </section>
   )
 }
 
-function FilePreviewPanel({ preview, storageKey, onRefresh }: { preview: FilePreview; storageKey: string; onRefresh: () => void }) {
+function FileTree({ entries, tree, expanded, changedPaths, onDirectory, onOpen, depth = 0 }: { entries: FileEntry[]; tree: Record<string, FileEntry[]>; expanded: string[]; changedPaths: Record<string, string>; onDirectory: (path: string) => void; onOpen: (path: string) => void; depth?: number }) {
+  return <ul className="file-list" style={{ '--file-depth': depth } as React.CSSProperties}>{entries.map((entry) => {
+    const open = entry.type === 'directory' && expanded.includes(entry.path)
+    return <li key={entry.path}><button type="button" aria-expanded={entry.type === 'directory' ? open : undefined} onClick={() => entry.type === 'directory' ? onDirectory(entry.path) : onOpen(entry.path)}>
+      <span aria-hidden="true">{entry.type === 'directory' ? open ? '−' : '+' : '#'}</span><span>{entry.name}</span><small>{changedPaths[entry.path] ?? entry.type}{entry.ignored ? ' / ignored' : ''}</small>
+    </button>{open ? <FileTree entries={tree[entry.path] ?? []} tree={tree} expanded={expanded} changedPaths={changedPaths} onDirectory={onDirectory} onOpen={onOpen} depth={depth + 1} /> : null}</li>
+  })}</ul>
+}
+
+function FilePreviewPanel({ preview, storageKey, initialScroll, onScroll, onRefresh }: { preview: FilePreview; storageKey: string; initialScroll: number; onScroll: (value: number) => void; onRefresh: () => void }) {
+  const previewRef = useRef<HTMLPreElement>(null)
   const [start, setStart] = useState(1)
   const [end, setEnd] = useState(1)
   const [note, setNote] = useState('')
@@ -121,9 +154,10 @@ function FilePreviewPanel({ preview, storageKey, onRefresh }: { preview: FilePre
     } catch { setComments([]) }
     setCommentsLoaded(true)
   }, [storageKey])
+  useEffect(() => { if (previewRef.current) previewRef.current.scrollTop = initialScroll }, [initialScroll])
   useEffect(() => {
     if (!commentsLoaded) return
-    try { localStorage.setItem(storageKey, JSON.stringify(comments)) } catch {}
+    writePersistentValue(localStorage, storageKey, JSON.stringify(comments), 'session-ui')
   }, [comments, commentsLoaded, storageKey])
 
   function saveComment() {
@@ -165,7 +199,7 @@ function FilePreviewPanel({ preview, storageKey, onRefresh }: { preview: FilePre
 
   return <article className="file-preview">
     <header><h3>{preview.path}</h3><span>{preview.type}{preview.mimeType ? ` / ${preview.mimeType}` : ''}</span><button type="button" onClick={onRefresh}>Refresh</button></header>
-    {preview.type === 'binary' ? <p>Binary files cannot be previewed as text.</p> : <pre><code>{preview.content}</code></pre>}
+    {preview.type === 'binary' ? <p>Binary files cannot be previewed as text.</p> : <pre ref={previewRef} onScroll={(event) => onScroll(event.currentTarget.scrollTop)}><code>{preview.content}</code></pre>}
     {preview.limited ? <p className="content-limit">This preview is truncated at 256 KiB.</p> : null}
     {preview.type === 'text' ? <fieldset><legend>Add line context to the prompt</legend>
       <label>Start line <input type="number" min="1" max={lineCount} value={start} onChange={(event) => setStart(Number(event.target.value))} /></label>

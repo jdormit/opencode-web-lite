@@ -5,9 +5,11 @@ import {
   Scripts,
   createRootRouteWithContext,
   useRouter,
+  useNavigate,
 } from '@tanstack/react-router'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 
 import { ThemePicker } from '~/components/theme-picker'
@@ -16,7 +18,11 @@ import { getConnectionSnapshot } from '~/functions/connections'
 import { getThemePreference } from '~/functions/preferences'
 import { strings } from '~/lib/strings'
 import { themePreloadScript } from '~/lib/theme'
+import { appCommands } from '~/lib/app-commands'
+import { DEFAULT_SHORTCUTS, effectiveShortcut, eventShortcut, isEditableTarget, type CommandDefinition, type ShortcutPreferences } from '~/lib/command-registry'
 import appCss from '~/styles/app.css?url'
+
+const CommandPalette = lazy(() => import('~/components/command-palette').then((module) => ({ default: module.CommandPalette })))
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   loader: async () => {
@@ -40,8 +46,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     links: [
       { rel: 'stylesheet', href: appCss },
       { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
+      { rel: 'manifest', href: '/manifest.webmanifest' },
+      { rel: 'apple-touch-icon', href: '/pwa-icon.svg' },
     ],
-    scripts: [{ children: themePreloadScript }],
+    scripts: [{ children: themePreloadScript }, { src: '/pwa-register.js', defer: true }],
   }),
   component: App,
   errorComponent: RootError,
@@ -52,11 +60,24 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 function App() {
   const { connection, theme } = Route.useLoaderData()
   const { queryClient } = Route.useRouteContext()
+  const navigate = useNavigate()
+  const commands = useMemo(() => appCommands({
+    home: () => void navigate({ to: '/' }),
+    new: () => void navigate({ to: '/new' }),
+    settings: () => void navigate({ to: '/settings' }),
+    back: () => history.back(),
+    forward: () => history.forward(),
+  }), [navigate])
 
   return (
     <QueryClientProvider client={queryClient}>
       <div className="app-shell">
-        <a className="skip-link" href="#main-content">
+        <a className="skip-link" href="#main-content" onClick={() => {
+          const main = document.getElementById('main-content')
+          if (!main) return
+          main.tabIndex = -1
+          main.focus()
+        }}>
           Skip to main content
         </a>
         <header className="route-bar">
@@ -78,9 +99,33 @@ function App() {
           <LiveConnection connection={connection} />
         </header>
         <Outlet />
+        <DeferredCommandPalette commands={commands} />
       </div>
     </QueryClientProvider>
   )
+}
+
+function DeferredCommandPalette({ commands }: { commands: CommandDefinition[] }) {
+  const [loaded, setLoaded] = useState(false)
+  useEffect(() => {
+    if (loaded) return
+    const keydown = (event: KeyboardEvent) => {
+      let overrides: ShortcutPreferences = {}
+      try { overrides = JSON.parse(localStorage.getItem('opencode-web-lite:shortcuts:v1') ?? '{}') as ShortcutPreferences } catch {}
+      const shortcut = eventShortcut(event)
+      const paletteShortcut = overrides['command.palette'] ?? DEFAULT_SHORTCUTS['command.palette']
+      if (shortcut === paletteShortcut) {
+        event.preventDefault(); setLoaded(true); return
+      }
+      if (isEditableTarget(event.target) && !event.ctrlKey && !event.metaKey && !event.altKey) return
+      const command = commands.find((candidate) => effectiveShortcut(candidate, overrides).split(',').includes(shortcut))
+      if (!command || (typeof command.disabled === 'function' ? command.disabled() : command.disabled)) return
+      event.preventDefault(); void command.run()
+    }
+    document.addEventListener('keydown', keydown, true)
+    return () => document.removeEventListener('keydown', keydown, true)
+  }, [commands, loaded])
+  return loaded ? <Suspense fallback={null}><CommandPalette commands={commands} initialOpen /></Suspense> : null
 }
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
@@ -119,10 +164,24 @@ function RootError({ error }: ErrorComponentProps) {
         <Link className="button-secondary" to="/">
           {strings.errors.returnHome}
         </Link>
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard.writeText(errorDetails(error))}
+        >
+          {strings.errors.copyDetails}
+        </button>
       </div>
       {import.meta.env.DEV ? <pre className="error-details">{error.message}</pre> : null}
     </main>
   )
+}
+
+function errorDetails(error: Error): string {
+  const safeMessage = error.message
+    .replaceAll(/https?:\/\/[^\s]+/gi, '[address removed]')
+    .replaceAll(/(authorization|password|token|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=[removed]')
+    .slice(0, 4_000)
+  return `${strings.productName}\n${error.name}: ${safeMessage || 'Unknown error'}\nRoute: ${location.pathname}`
 }
 
 function NotFound() {

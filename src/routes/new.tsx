@@ -3,18 +3,20 @@ import { useServerFn } from '@tanstack/react-start'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { PageIntro } from '~/components/page-intro'
-import { getHomeIndex } from '~/functions/home-index'
+import { getAllHomeIndices } from '~/functions/home-index'
 import { getComposerOptions } from '~/functions/composer-options'
 import { createSessionMutation } from '~/functions/session-create'
-import { getConnectionSnapshot } from '~/functions/connections'
 import { strings } from '~/lib/strings'
+import { tabStore } from '~/lib/tab-store'
+import { readProjectState, writeProjectState } from '~/lib/project-state'
+import { worktreeMutation } from '~/functions/projects'
+import { removePersistentValue, writePersistentValue } from '~/lib/persistence'
 
 export const Route = createFileRoute('/new')({
   loader: async () => {
     try {
-      const connection = await getConnectionSnapshot()
-      const serverKey = connection.server.key
-      const index = await getHomeIndex({ data: { serverKey } })
+       const index = await getAllHomeIndices({ data: { limit: 64 } })
+       const serverKey = index.projects[0]?.serverKey ?? 'invalid'
       const firstDirectory = index.projects[0]?.directory
       const composer = firstDirectory
         ? await getComposerOptions({ data: { serverKey, directory: firstDirectory } })
@@ -37,12 +39,17 @@ export const Route = createFileRoute('/new')({
 function NewSession() {
   const { composer: initialComposer, error: loadError, limited, projects, serverKey } = Route.useLoaderData()
   const createSession = useServerFn(createSessionMutation)
+  const mutateWorktree = useServerFn(worktreeMutation)
   const loadComposer = useServerFn(getComposerOptions)
   const navigate = useNavigate()
   const router = useRouter()
   const [error, setError] = useState('')
+  const [storageError, setStorageError] = useState('')
   const [pending, setPending] = useState(false)
+  const [availableProjects, setAvailableProjects] = useState(projects)
   const [directory, setDirectory] = useState(projects[0]?.directory ?? '')
+  const [selectedServerKey, setSelectedServerKey] = useState(serverKey)
+  const [projectSearch, setProjectSearch] = useState('')
   const [title, setTitle] = useState('')
   const [created, setCreated] = useState<{ serverKey: string; sessionID: string }>()
   const [composer, setComposer] = useState(initialComposer)
@@ -54,9 +61,16 @@ function NewSession() {
   )
   const [variant, setVariant] = useState('')
   const submitting = useRef(false)
+  const draftRestored = useRef(false)
   const draftKey = `opencode-web-lite:new-session-draft:v1:${serverKey}`
+  const draftId = `new_${serverKey}`
 
   useEffect(() => {
+    tabStore.open({ type: 'draft', serverKey, draftId, title: title || 'New session', ...(directory ? { directory } : {}) })
+  }, [directory, draftId, serverKey, title])
+
+  useEffect(() => {
+    let frame = 0
     try {
       const saved = JSON.parse(localStorage.getItem(draftKey) ?? 'null') as unknown
       if (saved && typeof saved === 'object') {
@@ -65,26 +79,36 @@ function NewSession() {
           'directory' in saved &&
           typeof saved.directory === 'string' &&
           projects.some((project) => project.worktrees.some((worktree) => worktree.directory === saved.directory))
-        ) void selectDirectory(saved.directory)
+         ) {
+           const project = projects.find((item) => item.worktrees.some((worktree) => worktree.directory === saved.directory))
+            if (project) void selectDirectory(project.serverKey, saved.directory, false)
+         }
       }
+      const state = readProjectState(localStorage)
+      const preferred = projects.find((project) => state.last[project.serverKey] && project.worktrees.some((worktree) => worktree.directory === state.last[project.serverKey]))
+      const preferredDirectory = preferred && state.last[preferred.serverKey]
+       if (preferred && preferredDirectory) void selectDirectory(preferred.serverKey, preferredDirectory, false)
     } catch {}
+    frame = requestAnimationFrame(() => { draftRestored.current = true })
+    return () => cancelAnimationFrame(frame)
   }, [draftKey, projects])
 
+  useEffect(() => {
+    if (draftRestored.current) saveDraft(directory, title)
+  }, [directory, title])
+
   function saveDraft(nextDirectory: string, nextTitle: string) {
-    try {
-      localStorage.setItem(
-        draftKey,
-        JSON.stringify({ directory: nextDirectory, title: nextTitle }),
-      )
-    } catch {}
+    const saved = writePersistentValue(localStorage, draftKey, JSON.stringify({ directory: nextDirectory, title: nextTitle }), 'draft')
+    setStorageError(saved ? '' : 'This draft could not be saved in your browser.')
   }
 
-  async function selectDirectory(nextDirectory: string) {
+   async function selectDirectory(nextServerKey: string, nextDirectory: string, persist = true) {
+     setSelectedServerKey(nextServerKey)
     setDirectory(nextDirectory)
-    saveDraft(nextDirectory, title)
+    if (persist) saveDraft(nextDirectory, title)
     setError('')
     try {
-      const next = await loadComposer({ data: { serverKey, directory: nextDirectory } })
+       const next = await loadComposer({ data: { serverKey: nextServerKey, directory: nextDirectory } })
       setComposer(next)
       setAgent(next.defaultAgent ?? '')
       setModelKey(
@@ -111,7 +135,7 @@ function NewSession() {
     const [providerID = '', modelID = ''] = modelKey.split('\0')
     void createSession({
       data: {
-        serverKey,
+         serverKey: selectedServerKey,
         directory,
         title,
         agent,
@@ -121,10 +145,12 @@ function NewSession() {
       },
     })
       .then(async (result) => {
-        try {
-          localStorage.removeItem(draftKey)
-        } catch {}
+        removePersistentValue(localStorage, draftKey)
         setCreated(result)
+        tabStore.promoteDraft(draftId, {
+          type: 'session', serverKey: result.serverKey, sessionId: result.sessionID,
+          title: title.trim() || 'New session', directory, status: 'idle',
+        })
         await navigate({
             to: '/server/$serverKey/session/$sessionId',
             params: {
@@ -152,14 +178,25 @@ function NewSession() {
         <form className="new-session-form" onSubmit={submit}>
           <label>
             <span>Project</span>
-            <select name="directory" required value={directory} onChange={(event) => void selectDirectory(event.target.value)}>
-              {projects.flatMap((project) => project.worktrees.map((worktree) => (
-                <option key={`${project.id}:${worktree.directory}`} value={worktree.directory}>
-                  {project.name} · {worktree.current ? 'Main worktree' : worktree.directory.split('/').at(-1)}
-                </option>
-              )))}
-            </select>
-          </label>
+             <input type="search" placeholder="Search projects and worktrees" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} />
+             <select name="directory" required value={`${selectedServerKey}\0${directory}`} onChange={(event) => { const [key = '', value = ''] = event.target.value.split('\0'); void selectDirectory(key, value); const state = readProjectState(localStorage); state.last[key] = value; try { writeProjectState(localStorage, state) } catch {} }}>
+               {availableProjects.filter((project) => `${project.serverLabel} ${project.name} ${project.directory}`.toLowerCase().includes(projectSearch.toLowerCase())).flatMap((project) => project.worktrees.map((worktree) => (
+                 <option key={`${project.serverKey}:${project.id}:${worktree.directory}`} value={`${project.serverKey}\0${worktree.directory}`}>
+                   {project.serverLabel} · {project.name} · {worktree.current ? 'Main worktree' : worktree.directory.split('/').at(-1)}{worktree.orphaned ? ' · Orphan recovery' : ''}
+                 </option>
+               )))}
+             </select>
+           </label>
+           <button type="button" onClick={() => {
+             const project = availableProjects.find((item) => item.serverKey === selectedServerKey && item.worktrees.some((worktree) => worktree.directory === directory))
+             if (!project) return
+             const name = prompt('Worktree name (optional)') ?? undefined
+             void mutateWorktree({ data: { serverKey: selectedServerKey, projectDirectory: project.directory, action: 'create', ...(name !== undefined ? { value: name } : {}) } }).then((result) => {
+               if (!('directory' in result) || typeof result.directory !== 'string') return
+               setAvailableProjects((current) => current.map((item) => item === project ? { ...item, worktrees: [...item.worktrees, { directory: result.directory, current: false, orphaned: true }] } : item))
+               void selectDirectory(selectedServerKey, result.directory)
+             }).catch(() => setError('The worktree could not be created. No session was created.'))
+           }}>Create optional worktree</button>
           <label>
             <span>Agent</span>
             <select value={agent} required onChange={(event) => setAgent(event.target.value)} disabled={!composer?.agents.length}>
@@ -200,7 +237,8 @@ function NewSession() {
             }} />
           </label>
           {limited ? <p className="empty-copy">Showing the first 64 projects.</p> : null}
-          {error ? <p className="form-error" role="alert">{error}</p> : null}
+       {error ? <p className="form-error" role="alert">{error}</p> : null}
+       {storageError ? <p className="form-error" role="alert">{storageError}</p> : null}
           {created ? (
             <a href={`/server/${created.serverKey}/session/${created.sessionID}`}>Open the created session</a>
           ) : null}

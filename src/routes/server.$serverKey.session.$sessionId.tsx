@@ -1,29 +1,44 @@
 import { createFileRoute, Link, notFound, useRouter } from '@tanstack/react-router'
-import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react'
+import { lazy, startTransition, Suspense, useEffect, useState } from 'react'
 
 import { getSessionSnapshot } from '~/functions/session-snapshot'
 import { getComposerOptions } from '~/functions/composer-options'
 import { SessionComposer } from '~/components/session-composer'
-import { SessionRequests } from '~/components/session-requests'
 import { SessionTimeline } from '~/components/session-timeline'
-import { SessionChanges } from '~/components/session-changes'
-import { SessionLifecycle } from '~/components/session-lifecycle'
 import { strings } from '~/lib/strings'
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import { parseRouteIdentity } from '~/lib/identity'
 import { getLiveStore } from '~/lib/live-store'
 import { applyLiveSessionEvents } from '~/lib/live-session'
 import { getNotificationStore } from '~/lib/notifications'
-import { addPromptContext, parsePromptContexts, promptContextLocked } from '~/lib/prompt-context'
 
 const SessionTerminal = lazy(() =>
   import('~/components/session-terminal').then((module) => ({
     default: module.SessionTerminal,
   })),
 )
+const SessionRequests = lazy(() =>
+  import('~/components/session-requests').then((module) => ({ default: module.SessionRequests })),
+)
 const SessionFiles = lazy(() =>
   import('~/components/session-files').then((module) => ({ default: module.SessionFiles })),
 )
+const SessionChanges = lazy(() =>
+  import('~/components/session-changes').then((module) => ({ default: module.SessionChanges })),
+)
+const loadSessionLifecycle = () => import('~/components/session-lifecycle')
+const SessionLifecycle = lazy(() => loadSessionLifecycle().then((module) => ({ default: module.SessionLifecycle })))
+const WorkspaceStatusPanel = lazy(() =>
+  import('~/components/workspace-status').then((module) => ({ default: module.WorkspaceStatusPanel })),
+)
+const TopLevelTabs = lazy(() =>
+  import('~/components/top-level-tabs').then((module) => ({ default: module.TopLevelTabs })),
+)
+const SessionContext = lazy(() =>
+  import('~/components/session-context').then((module) => ({ default: module.SessionContext })),
+)
+const TodoDock = lazy(() => import('~/components/todo-dock').then((module) => ({ default: module.TodoDock })))
+const SessionContextCollector = lazy(() => import('~/components/session-context-collector').then((module) => ({ default: module.SessionContextCollector })))
 
 export const Route = createFileRoute('/server/$serverKey/session/$sessionId')({
   validateSearch: (search: Record<string, unknown>): { view?: 'changes' | 'files' | 'terminal' } =>
@@ -36,17 +51,34 @@ export const Route = createFileRoute('/server/$serverKey/session/$sessionId')({
     }
   },
   loader: async ({ params }) => {
+    const liveRevision = typeof window === 'undefined'
+      ? 0
+      : getLiveStore(params.serverKey).getSnapshot().revision
     const snapshot = await getSessionSnapshot({
       data: { serverKey: params.serverKey, sessionID: params.sessionId },
     })
     if (!snapshot) throw notFound()
-    const liveRevision = typeof window === 'undefined'
-      ? 0
-      : getLiveStore(params.serverKey).getSnapshot().revision
-    const composer = await getComposerOptions({ data: { serverKey: params.serverKey, directory: snapshot.directory } }).catch(
+    const composer = await getComposerOptions({ data: { serverKey: params.serverKey, directory: snapshot.directory, sessionID: params.sessionId } }).catch(
       () => ({ agents: [], models: [] }),
     )
-    return { snapshot, composer, liveRevision }
+    const contextModel = composer.models.find((model) =>
+      model.providerID === snapshot.context.providerID && model.modelID === snapshot.context.modelID)
+    const contextLimit = contextModel?.contextLimit
+    const contextTotal = snapshot.context.tokens?.total
+    return {
+      snapshot: {
+        ...snapshot,
+        context: {
+          ...snapshot.context,
+          ...(contextLimit ? {
+            contextLimit,
+            ...(contextTotal !== undefined ? { contextPercent: Math.round((contextTotal / contextLimit) * 100) } : {}),
+          } : {}),
+        },
+      },
+      composer,
+      liveRevision,
+    }
   },
   head: ({ loaderData, params }) => ({
     meta: [{ title: `${loaderData?.snapshot.title ?? params.sessionId} | ${strings.productName}` }],
@@ -58,11 +90,13 @@ function Session() {
   const { serverKey, sessionId } = Route.useParams()
   const { composer, snapshot: loaderSnapshot, liveRevision } = Route.useLoaderData()
   const liveStore = getLiveStore(serverKey)
-  const liveSnapshot = useSyncExternalStore(
-    liveStore.subscribe,
-    liveStore.getSnapshot,
-    liveStore.getSnapshot,
-  )
+  const [liveSnapshot, setLiveSnapshot] = useState(liveStore.getSnapshot)
+  useEffect(() => {
+    const update = () => startTransition(() => setLiveSnapshot(liveStore.getSnapshot()))
+    const unsubscribe = liveStore.subscribe(update)
+    update()
+    return () => { unsubscribe() }
+  }, [liveStore])
   const snapshot = applyLiveSessionEvents(
     loaderSnapshot,
     liveSnapshot.revision > liveRevision
@@ -89,11 +123,12 @@ function Session() {
 
   return (
     <main id="main-content" className="session-shell">
+      <Suspense fallback={null}><TopLevelTabs serverKey={serverKey} sessionId={sessionId} title={snapshot.title} directory={snapshot.directory} status={snapshot.permission ? 'waiting' : snapshot.question ? 'waiting' : snapshot.busy ? 'working' : 'idle'} /></Suspense>
       <header className="session-header">
         <p className="eyebrow">{strings.session.eyebrow}</p>
         <h1>{snapshot.title}</h1>
         <p>{snapshot.directory}</p>
-        <SessionLifecycle
+        <DeferredSessionLifecycle><SessionLifecycle
           key={`${serverKey}:${sessionId}`}
           serverKey={serverKey}
           sessionID={sessionId}
@@ -101,11 +136,9 @@ function Session() {
           {...(snapshot.shareUrl ? { shareUrl: snapshot.shareUrl } : {})}
           sharingEnabled={snapshot.sharingEnabled}
           {...(snapshot.changeMessageId ? { undoMessageID: snapshot.changeMessageId } : {})}
-          userMessages={snapshot.items.filter((item) => item.role === 'user').map((item) => ({
-            id: item.id,
-            label: item.parts.find((part) => part.type === 'text')?.type === 'text'
-              ? item.parts.find((part) => part.type === 'text')!.text.slice(0, 100)
-              : item.createdLabel,
+           userMessages={snapshot.items.filter((item) => item.role === 'user').map((item) => ({
+             id: item.id,
+             label: messageText(item) ?? item.createdLabel,
           }))}
           {...(snapshot.revertMessageID ? { revertMessageID: snapshot.revertMessageID } : {})}
           {...(snapshot.revertUndoMessageID ? { revertUndoMessageID: snapshot.revertUndoMessageID } : {})}
@@ -115,8 +148,10 @@ function Session() {
           children={snapshot.children}
           childrenLimited={snapshot.childrenLimited}
           forkPointsLimited={snapshot.hasOlder}
-        />
+          initialOpen
+        /></DeferredSessionLifecycle>
       </header>
+      <div className="session-utilities"><Suspense fallback={<span>Context</span>}><SessionContext context={snapshot.context} /></Suspense><DeferredWorkspaceStatus><WorkspaceStatusPanel serverKey={serverKey} sessionId={sessionId} /></DeferredWorkspaceStatus></div>
       <nav className="session-destinations" aria-label="Session destinations">
         <Link to="." search={{}} aria-current={view === 'chat' ? 'page' : undefined}>Chat</Link>
         <Link to="." search={{ view: 'changes' }} aria-current={view === 'changes' ? 'page' : undefined}>
@@ -125,25 +160,25 @@ function Session() {
         <Link to="." search={{ view: 'files' }} aria-current={view === 'files' ? 'page' : undefined}>Files</Link>
         <Link to="." search={{ view: 'terminal' }} aria-current={view === 'terminal' ? 'page' : undefined}>Terminal</Link>
       </nav>
-      <SessionRequests
+      <Suspense fallback={<p>Loading pending requests...</p>}><SessionRequests
         key={`requests:${snapshot.permission?.id ?? ''}:${snapshot.question?.id ?? ''}`}
         serverKey={serverKey}
         directory={snapshot.directory}
         permission={snapshot.permission}
         question={snapshot.question}
         unavailable={snapshot.requestsUnavailable}
-      />
-      <SessionContextCollector serverKey={serverKey} sessionId={sessionId} />
+      /></Suspense>
+      <Suspense fallback={null}><SessionContextCollector serverKey={serverKey} sessionId={sessionId} /></Suspense>
       {view === 'chat' ? <>
       {snapshot.todosUnavailable ? <p className="history-note">Todos are temporarily unavailable.</p> : null}
-      {snapshot.todos.length ? <TodoDock sessionId={sessionId} snapshot={snapshot} /> : null}
+      {snapshot.todos.length ? <Suspense fallback={<p>Loading...</p>}><TodoDock sessionId={sessionId} snapshot={snapshot} /></Suspense> : null}
       <SessionTimeline key={`${serverKey}:${sessionId}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} />
       </> : view === 'changes' ? (
-        <SessionChanges key={`${serverKey}:${sessionId}:${snapshot.changeMessageId ?? ''}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} />
+        <Suspense fallback={<p>Loading changes...</p>}><SessionChanges key={`${serverKey}:${sessionId}:${snapshot.changeMessageId ?? ''}`} serverKey={serverKey} sessionId={sessionId} snapshot={snapshot} /></Suspense>
       ) : view === 'files' ? (
-        <Suspense fallback={<p>Loading files...</p>}><SessionFiles key={`${serverKey}:${sessionId}`} serverKey={serverKey} sessionId={sessionId} /></Suspense>
+        <Suspense fallback={<p>Loading files...</p>}><SessionFiles key={`${serverKey}:${snapshot.directory}`} serverKey={serverKey} sessionId={sessionId} workspaceDirectory={snapshot.directory} changedPaths={Object.fromEntries(snapshot.changes.map((change) => [change.file, change.status]))} /></Suspense>
       ) : <Suspense fallback={<p>Loading terminal...</p>}><SessionTerminal serverKey={serverKey} directory={snapshot.directory} /></Suspense>}
-      <div hidden={view !== 'chat'}>
+      <div className="composer-container" hidden={view !== 'chat'}>
         <SessionComposer
           key={`${serverKey}:${sessionId}`}
           serverKey={serverKey}
@@ -160,73 +195,27 @@ function Session() {
   )
 }
 
-function SessionContextCollector({ serverKey, sessionId }: { serverKey: string; sessionId: string }) {
-  const [status, setStatus] = useState<string>()
+function DeferredSessionLifecycle({ children }: { children: React.ReactNode }) {
+  const [loaded, setLoaded] = useState(false)
   useEffect(() => {
-    const key = `opencode-web-lite:session-draft:v1:${serverKey}:${sessionId}`
-    const contextKey = `opencode-web-lite:session-contexts:v1:${serverKey}:${sessionId}`
-    const collect = (event: Event) => {
-      if (promptContextLocked(contextKey)) {
-        event.preventDefault()
-        setStatus('Wait for the current prompt to be accepted before changing context.')
-        return
-      }
-      const context = (event as CustomEvent<{ context?: unknown }>).detail?.context
-      let current: unknown = []
-      try { current = JSON.parse(localStorage.getItem(contextKey) ?? '[]') } catch {}
-      const result = addPromptContext(parsePromptContexts(current), context)
-      if (!result.ok) {
-        event.preventDefault()
-        setStatus('Context was not added because it exceeds the item or 32,000-character limit.')
-        return
-      }
-      try {
-        localStorage.setItem(contextKey, JSON.stringify(result.value))
-        window.dispatchEvent(new CustomEvent('opencode:draft-updated', {
-          detail: { key, contexts: result.value },
-        }))
-        setStatus('Context added to the prompt draft.')
-      } catch {
-        event.preventDefault()
-        setStatus('Context could not be saved to the prompt draft.')
-      }
-    }
-    window.addEventListener('opencode:add-context', collect)
-    return () => window.removeEventListener('opencode:add-context', collect)
-  }, [serverKey, sessionId])
-  return status ? <p role="status">{status}</p> : null
+    const preload = () => { void loadSessionLifecycle() }
+    const idleWindow = window as Window & { requestIdleCallback?: (callback: IdleRequestCallback) => number; cancelIdleCallback?: (id: number) => void }
+    const id = idleWindow.requestIdleCallback ? idleWindow.requestIdleCallback(preload) : window.setTimeout(preload, 1_000)
+    return () => { if (idleWindow.cancelIdleCallback) idleWindow.cancelIdleCallback(id); else window.clearTimeout(id) }
+  }, [])
+  return loaded
+    ? <Suspense fallback={<p>Loading session actions...</p>}>{children}</Suspense>
+    : <button type="button" className="button-secondary" onClick={() => setLoaded(true)}>Session actions</button>
 }
 
-function TodoDock({ sessionId, snapshot }: { sessionId: string; snapshot: SessionSnapshot }) {
-  const storageKey = `opencode-web-lite:todo-open:${sessionId}`
-  const [open, setOpen] = useState(false)
-  useEffect(() => {
-    try {
-      setOpen(localStorage.getItem(storageKey) === 'true')
-    } catch {
-      setOpen(false)
-    }
-  }, [storageKey])
-  const completed = snapshot.todos.filter((todo) => todo.status === 'completed').length
-  const active = snapshot.todos.find((todo) => todo.status === 'in_progress')
+function DeferredWorkspaceStatus({ children }: { children: React.ReactNode }) {
+  const [loaded, setLoaded] = useState(false)
+  return loaded
+    ? <Suspense fallback={<p>Loading...</p>}>{children}</Suspense>
+    : <button type="button" className="button-secondary" onClick={() => setLoaded(true)}>System status</button>
+}
 
-  return (
-    <details className="todo-dock" open={open} onToggle={(event) => {
-      const next = event.currentTarget.open
-      setOpen(next)
-      try {
-        localStorage.setItem(storageKey, String(next))
-      } catch {
-        // Persistence is optional when browser storage is unavailable.
-      }
-    }}>
-      <summary>
-        Todos ({completed}/{snapshot.todos.length}{snapshot.todosLimited ? '+' : ''})
-        {active ? <small>{active.content}</small> : null}
-      </summary>
-      <ul>{snapshot.todos.map((todo, index) => (
-        <li key={`${todo.content}-${index}`}><span>{todo.content}</span><small>{todo.status} / {todo.priority}</small></li>
-      ))}</ul>
-    </details>
-  )
+function messageText(item: SessionSnapshot['items'][number]) {
+  const part = item.parts.find((candidate) => candidate.type === 'text')
+  return part && 'text' in part ? part.text.slice(0, 100) : undefined
 }

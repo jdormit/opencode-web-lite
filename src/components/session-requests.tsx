@@ -1,6 +1,6 @@
 import { useServerFn } from '@tanstack/react-start'
 import { useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { SessionSnapshot } from '~/lib/session-snapshot'
 import { rejectQuestionMutation, replyPermissionMutation, replyQuestionMutation } from '~/functions/requests'
@@ -23,6 +23,8 @@ export function SessionRequests(props: Props) {
   )
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => setHydrated(true), [])
 
   async function permission(reply: 'once' | 'always' | 'reject') {
     if (!props.permission || pending) return
@@ -120,9 +122,9 @@ export function SessionRequests(props: Props) {
           ) : null}
           {!props.permission.complete ? <p className="form-error">The full permission scope is too large to display safely.</p> : null}
           <div className="action-row">
-            <button type="button" disabled={pending || !props.permission.complete} onClick={() => void permission('once')}>Allow once</button>
-            <button type="button" disabled={pending || !props.permission.complete || !props.permission.always.length} onClick={() => void permission('always')}>Always allow</button>
-            <button type="button" disabled={pending} onClick={() => void permission('reject')}>Reject</button>
+            <button type="button" disabled={!hydrated || pending || !props.permission.complete} onClick={() => void permission('once')}>Allow once</button>
+            <button type="button" disabled={!hydrated || pending || !props.permission.complete || !props.permission.always.length} onClick={() => void permission('always')}>Always allow</button>
+            <button type="button" disabled={!hydrated || pending} onClick={() => void permission('reject')}>Reject</button>
           </div>
         </section>
       ) : null}
@@ -164,8 +166,8 @@ export function SessionRequests(props: Props) {
             </fieldset>
           ))}
           <div className="action-row">
-            <button type="button" disabled={pending || !props.question.complete} onClick={() => void submitAnswers()}>Submit answers</button>
-            <button type="button" disabled={pending} onClick={() => void reject()}>Reject question</button>
+            <button type="button" disabled={!hydrated || pending || !props.question.complete} onClick={() => void submitAnswers()}>Submit answers</button>
+            <button type="button" disabled={!hydrated || pending} onClick={() => void reject()}>Reject question</button>
           </div>
         </section>
       ) : null}

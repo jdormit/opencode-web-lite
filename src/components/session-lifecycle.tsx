@@ -19,6 +19,7 @@ export function SessionLifecycle({
   children,
   childrenLimited,
   forkPointsLimited,
+  initialOpen = false,
 }: {
   serverKey: string
   sessionID: string
@@ -35,6 +36,7 @@ export function SessionLifecycle({
   children: Array<{ id: string; title: string }>
   childrenLimited: boolean
   forkPointsLimited: boolean
+  initialOpen?: boolean
 }) {
   const navigate = useNavigate()
   const router = useRouter()
@@ -44,6 +46,7 @@ export function SessionLifecycle({
   const [forkMessageID, setForkMessageID] = useState(userMessages.at(-1)?.id ?? '')
   const [pending, setPending] = useState<LifecycleAction>()
   const [status, setStatus] = useState('')
+  const [open, setOpen] = useState(initialOpen)
 
   async function run(action: LifecycleAction, value?: string) {
     if (pending) return
@@ -88,7 +91,7 @@ export function SessionLifecycle({
     }
   }
   return (
-    <details className="session-actions">
+    <details className="session-actions" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>Session actions</summary>
       <div className="session-action-grid">
         {pending ? <p role="status">{pending === 'compact' ? 'Compacting session...' : 'Updating session...'}</p> : null}
