@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { parseRouteIdentity } from '~/lib/identity'
 import { mutateSessionLifecycle, type LifecycleAction } from '~/server/session-lifecycle.server'
+import { assertSameOriginRequest } from '~/server/request-security.server'
 
 const actions = new Set<LifecycleAction>(['rename', 'archive', 'delete', 'fork', 'share', 'unshare', 'compact', 'undo', 'redo'])
 
@@ -11,4 +12,4 @@ export const sessionLifecycleMutation = createServerFn({ method: 'POST' })
     if (data.value !== undefined && data.value.length > 2_000) throw new Error('Invalid action value')
     return data
   })
-  .handler(({ data }) => mutateSessionLifecycle(data.serverKey, data.sessionID, data.action, data.value))
+  .handler(({ data }) => { assertSameOriginRequest(); return mutateSessionLifecycle(data.serverKey, data.sessionID, data.action, data.value) })

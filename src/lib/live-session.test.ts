@@ -7,10 +7,11 @@ import type { NormalizedGlobalEvent } from './live-store'
 const snapshot: SessionSnapshot = {
   id: 'ses_1', title: 'Session', directory: '/work', children: [], childrenLimited: false,
   sharingEnabled: true, revertedTurns: [], revertsLimited: false,
-  items: [], removedMessageIds: [], hasOlder: false,
+  items: [], turns: [], removedMessageIds: [], hasOlder: false,
   busy: false, requestsUnavailable: false, todos: [], todosLimited: false,
   todosUnavailable: false, changes: [], changesLimited: false, changesTotal: 0,
   changesAdditions: 0, changesDeletions: 0,
+  context: { createdAt: 1, updatedAt: 1, freshness: 'unavailable' },
 }
 
 function event(type: string, properties: Record<string, unknown>, observedAt: number): NormalizedGlobalEvent {
@@ -42,6 +43,7 @@ describe('applyLiveSessionEvents', () => {
       ...snapshot,
       items: [{
         id: 'msg_1', role: 'assistant', createdAt: 1, createdLabel: 'now',
+        metadata: {},
         parts: [{ id: 'part_1', type: 'text', text: 'Hi', limited: false }],
       }],
     }
@@ -60,6 +62,7 @@ describe('applyLiveSessionEvents', () => {
       ...snapshot,
       items: [{
         id: 'msg_1', role: 'assistant', createdAt: 1, createdLabel: 'now',
+        metadata: {},
         parts: [{ id: 'part_1', type: 'text', text: 'foo', limited: false }],
       }],
     }
@@ -74,7 +77,7 @@ describe('applyLiveSessionEvents', () => {
   test('records removed-message tombstones without mutating loader data', () => {
     const loaded: SessionSnapshot = {
       ...snapshot,
-      items: [{ id: 'msg_1', role: 'user', createdAt: 1, createdLabel: 'now', parts: [] }],
+      items: [{ id: 'msg_1', role: 'user', createdAt: 1, createdLabel: 'now', metadata: {}, parts: [] }],
     }
     const result = applyLiveSessionEvents(loaded, [
       event('message.removed', { sessionID: 'ses_1', messageID: 'msg_1' }, 1),

@@ -33,7 +33,7 @@ export class GlobalEventStream {
     private readonly serverKey: string,
     options: StreamOptions = {},
   ) {
-    this.fetcher = options.fetch ?? fetch
+    this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.random = options.random ?? Math.random
     this.baseDelayMs = options.baseDelayMs ?? 500
     this.maximumDelayMs = options.maximumDelayMs ?? 30_000
@@ -124,22 +124,27 @@ export class GlobalEventStream {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let blocksSinceYield = 0
     try {
       while (true) {
         const { done, value } = await reader.read()
         buffer += decoder.decode(value, { stream: !done })
         buffer = buffer.replaceAll('\r\n', '\n').replace(/\r(?!$)/g, '\n')
         if (done) buffer = buffer.replaceAll('\r', '\n')
-        let boundary = buffer.indexOf('\n\n')
-        while (boundary >= 0) {
-          this.parseBlock(buffer.slice(0, boundary))
-          buffer = buffer.slice(boundary + 2)
-          boundary = buffer.indexOf('\n\n')
+        const blocks = buffer.split('\n\n')
+        buffer = blocks.pop() ?? ''
+        for (let index = 0; index < blocks.length; index += 1) {
+          this.parseBlock(blocks[index]!)
+          blocksSinceYield += 1
+          if (blocksSinceYield >= 25 && index < blocks.length - 1) {
+            blocksSinceYield = 0
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          }
         }
         if (buffer.length > GlobalEventStream.maximumBufferBytes) {
           throw new Error('Event stream block exceeded its byte limit')
         }
-        if (done) break
+        if (done) { this.flush(); break }
       }
     } finally {
       reader.releaseLock()

@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { createSession } from '~/server/session-create.server'
+import { assertSameOriginRequest } from '~/server/request-security.server'
 
 export const createSessionMutation = createServerFn({ method: 'POST' })
   .validator((data: unknown) => {
@@ -28,4 +29,4 @@ export const createSessionMutation = createServerFn({ method: 'POST' })
       variant: data.variant,
     }
   })
-  .handler(({ data }) => createSession(data))
+  .handler(({ data }) => { assertSameOriginRequest(); return createSession(data) })

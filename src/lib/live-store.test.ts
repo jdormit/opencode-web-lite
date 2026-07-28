@@ -76,6 +76,9 @@ describe('LiveStore', () => {
     store.apply([event('message.part.delta', { sessionID: 'ses_1', messageID: 'msg_1', partID: 'part_1', field: 'text', delta: 'hel' }, '1')])
     store.apply([event('message.part.delta', { sessionID: 'ses_1', messageID: 'msg_1', partID: 'part_1', field: 'text', delta: 'lo' }, '2')])
     expect([...store.getSnapshot().latest.values()][0]?.properties.delta).toBe('hello')
+    expect(store.eventsForSession('ses_1')).toHaveLength(1)
+    expect(store.eventsForSession('ses_1')[0]?.properties.delta).toBe('hello')
+    expect(store.eventsForSession('ses_1')[0]?.observedAt).toBe(2)
   })
 
   test('bounds latest entity state', () => {

@@ -14,3 +14,18 @@ export type ConnectionSnapshot = {
     | 'unavailable'
   version?: string
 }
+
+export type ConnectionRegistrySnapshot = {
+  defaultKey: string
+  servers: ConnectionSnapshot[]
+  persistent: boolean
+}
+
+export type ConnectionInput = {
+  key?: string
+  label: string
+  url: string
+  username?: string
+  password?: string
+  clearCredentials?: boolean
+}

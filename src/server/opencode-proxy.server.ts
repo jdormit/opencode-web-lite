@@ -15,6 +15,9 @@ const allowedMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 const maximumRequestBytes = 1024 * 1024
 const maximumResponseBytes = 4 * 1024 * 1024
 const finiteRequestTimeoutMs = 8_000
+const maximumEventStreamMs = 30 * 60_000
+const maximumEventStreams = 32
+let activeEventStreams = 0
 const strippedRequestHeaders = new Set([
   'authorization',
   'accept-encoding',
@@ -55,6 +58,13 @@ export async function proxyOpenCodeRequest(
 
   const path = validatePath(request, splat, options.serverKey)
   if (!path) return new Response('Unsupported OpenCode path', { status: 404 })
+  const streaming = path === '/global/event'
+  if (streaming && !isSameOriginEventRequest(request)) {
+    return new Response('Cross-origin request rejected', { status: 403 })
+  }
+  if (streaming && activeEventStreams >= maximumEventStreams) {
+    return new Response('Too many event streams', { status: 503 })
+  }
 
   let connection: ServerConnection
   try {
@@ -76,9 +86,18 @@ export async function proxyOpenCodeRequest(
   const headers = proxyRequestHeaders(request.headers, connection)
 
   let response: Response
-  const streaming = path === '/global/event'
+  let releaseEventStream: (() => void) | undefined
+  if (streaming) {
+    activeEventStreams += 1
+    let released = false
+    releaseEventStream = () => {
+      if (released) return
+      released = true
+      activeEventStreams -= 1
+    }
+  }
   const finiteSignal = streaming
-    ? request.signal
+    ? AbortSignal.any([request.signal, AbortSignal.timeout(options.timeoutMs ?? maximumEventStreamMs)])
     : AbortSignal.any([request.signal, AbortSignal.timeout(options.timeoutMs ?? finiteRequestTimeoutMs)])
   try {
     const declaredRequestLength = Number(request.headers.get('content-length'))
@@ -106,6 +125,7 @@ export async function proxyOpenCodeRequest(
       response = bounded
     }
   } catch (error) {
+    releaseEventStream?.()
     if (isTimeout(error) || (!request.signal.aborted && finiteSignal.aborted)) {
       return new Response('OpenCode server timed out', { status: 504 })
     }
@@ -120,9 +140,16 @@ export async function proxyOpenCodeRequest(
   if (path === '/global/event') {
     responseHeaders.set('Content-Type', 'text/event-stream')
     responseHeaders.set('X-Accel-Buffering', 'no')
+  } else {
+    responseHeaders.set('Content-Type', 'application/json; charset=utf-8')
   }
 
-  return new Response(response.body, {
+  const body = streaming && response.body && releaseEventStream
+    ? releaseOnCompletion(response.body, finiteSignal, releaseEventStream)
+    : response.body
+  if (streaming && !body) releaseEventStream?.()
+
+  return new Response(body, {
     status: response.status,
     statusText: response.statusText,
     headers: responseHeaders,
@@ -241,6 +268,43 @@ function isSameOriginMutation(request: Request): boolean {
   const referer = request.headers.get('referer')
   if (referer) return new URL(referer).origin === requestOrigin
   return false
+}
+
+function isSameOriginEventRequest(request: Request): boolean {
+  const requestOrigin = new URL(request.url).origin
+  const origin = request.headers.get('origin')
+  if (origin) return origin === requestOrigin
+  return request.headers.get('sec-fetch-site') !== 'cross-site'
+}
+
+function releaseOnCompletion(
+  stream: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  release: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = stream.getReader()
+  const onAbort = () => { release(); void reader.cancel(signal.reason).catch(() => {}) }
+  signal.addEventListener('abort', onAbort, { once: true })
+  const finish = () => {
+    signal.removeEventListener('abort', onAbort)
+    release()
+  }
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const result = await reader.read()
+        if (result.done) { finish(); controller.close(); return }
+        controller.enqueue(result.value)
+      } catch (error) {
+        finish()
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      finish()
+      await reader.cancel(reason).catch(() => {})
+    },
+  })
 }
 
 function proxyRequestHeaders(

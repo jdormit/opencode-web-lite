@@ -7,6 +7,7 @@ import {
   type ServerConnection,
 } from './connections.server'
 import { loadComposerOptions } from './composer-options.server'
+import { claimWorktree } from './projects.server'
 
 type CreateClient = {
   project: {
@@ -71,6 +72,8 @@ export async function createSession(
     },
   )
   if (!result.data) throw new Error('The session could not be created')
+
+  claimWorktree(input.serverKey, project.worktree, directory)
 
   return { serverKey: connection.key, sessionID: result.data.id }
 }

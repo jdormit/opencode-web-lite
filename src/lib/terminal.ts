@@ -1,3 +1,5 @@
+import { writePersistentValue } from './persistence'
+
 export type PtyInfo = {
   id: string
   title: string
@@ -68,17 +70,15 @@ export function readTerminalWorkspace(key: string): TerminalWorkspaceState {
 export function writeTerminalWorkspace(key: string, value: TerminalWorkspaceState) {
   const bounded = boundWorkspace(value)
   try {
-    localStorage.setItem(key, JSON.stringify(bounded))
-    return
-  } catch {
+    if (writePersistentValue(localStorage, key, JSON.stringify(bounded), 'terminal')) return
     const withoutBuffers = {
       ...bounded,
       terminals: bounded.terminals.map(
         ({ buffer: _buffer, cursor: _cursor, scrollY: _scrollY, ...rest }) => rest,
       ),
     }
-    localStorage.setItem(key, JSON.stringify(withoutBuffers))
-  }
+    writePersistentValue(localStorage, key, JSON.stringify(withoutBuffers), 'terminal')
+  } catch {}
 }
 
 /**

@@ -128,6 +128,26 @@ describe('proxyOpenCodeRequest', () => {
     expect(await response.text()).toContain('"type":"ready"')
   })
 
+  test('rejects cross-site event streams', async () => {
+    const response = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/global/event', {
+        headers: { Origin: 'https://attacker.example' },
+      }),
+      'global/event',
+      { connection, fetch: async () => { throw new Error('must not fetch') } },
+    )
+    expect(response.status).toBe(403)
+  })
+
+  test('forces finite proxy responses to a non-executable content type', async () => {
+    const response = await proxyOpenCodeRequest(
+      new Request('http://127.0.0.1/api/opencode/pty'),
+      'pty',
+      { connection, fetch: async () => new Response('<script>alert(1)</script>', { headers: { 'Content-Type': 'text/html' } }) },
+    )
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8')
+  })
+
   test('rejects encoded slashes in terminal identities', async () => {
     const response = await proxyOpenCodeRequest(
       new Request('http://127.0.0.1/api/opencode/pty/server%2Fname'),

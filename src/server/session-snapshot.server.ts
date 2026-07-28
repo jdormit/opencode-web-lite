@@ -1,6 +1,8 @@
 import type { Config, Message, Part, PermissionRequest, QuestionRequest, Session, SessionStatus, SnapshotFileDiff, Todo } from '@opencode-ai/sdk/v2/client'
 
 import type { SessionFileDiff, SessionHistoryPage, SessionSnapshot, SessionTimelineItem } from '~/lib/session-snapshot'
+import { projectTurns } from '~/lib/session-snapshot'
+import { projectTimelineMessage, projectTokens } from '~/lib/timeline-projection'
 import {
   createSdkForConnection,
   resolveConnection,
@@ -34,6 +36,7 @@ type SessionClient = {
   permission?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: PermissionRequest[] | undefined }> }
   question?: { list(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: QuestionRequest[] | undefined }> }
   config?: { get(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: Config | undefined }> }
+  vcs?: { get(parameters: { directory: string }, options?: { signal?: AbortSignal }): Promise<{ data: { branch?: string; default_branch?: string } | undefined }> }
 }
 
 export async function loadSessionFileDiff(
@@ -76,7 +79,7 @@ export async function loadSessionSnapshot(
   }
 
   const session = sessionResult.data
-  const [messageResult, statusResult, childResult, todoResult, permissionResult, questionResult, configResult] = await Promise.all([
+  const [messageResult, statusResult, childResult, todoResult, permissionResult, questionResult, configResult, vcsResult] = await Promise.all([
     client.session.messages(
       { sessionID, directory: session.directory, limit: 20 },
       { signal },
@@ -99,6 +102,7 @@ export async function loadSessionSnapshot(
           .catch(() => ({ value: undefined, failed: true }))
       : undefined,
     client.config?.get({ directory: session.directory }, { signal }).catch(() => undefined),
+    client.vcs?.get({ directory: session.directory }, { signal }).catch(() => undefined),
   ])
   if (!messageResult.data) throw new Error('Session messages could not be loaded')
   const messages = messageResult.data
@@ -130,6 +134,11 @@ export async function loadSessionSnapshot(
     (permissionResult?.value?.data?.length ?? 0) > 100 ||
     (questionResult?.value?.data?.length ?? 0) > 100
 
+  const projectedItems = visible.map(projectMessage)
+  const lastAssistant = [...projectedItems].reverse().find((item) => item.role === 'assistant')
+  const sessionTokens = projectTokens(session.tokens)
+  const contextTokens = lastAssistant?.metadata.tokens ?? sessionTokens
+  const contextCost = lastAssistant?.metadata.cost ?? session.cost
   return {
     id: session.id,
     title: bounded(session.title, 500),
@@ -151,6 +160,8 @@ export async function loadSessionSnapshot(
       ? { historyCursor: bounded(messageResult.response.headers.get('x-next-cursor')!, 2_048) }
       : {}),
     busy: statusResult?.data?.[session.id]?.type === 'busy',
+    ...(vcsResult?.data?.branch ? { branch: bounded(vcsResult.data.branch, 500) } : {}),
+    ...(vcsResult?.data?.default_branch ? { defaultBranch: bounded(vcsResult.data.default_branch, 500) } : {}),
     requestsUnavailable:
       permissionResult?.failed === true ||
       questionResult?.failed === true ||
@@ -185,7 +196,20 @@ export async function loadSessionSnapshot(
     ...(currentTurnMessage ? { changeMessageId: currentTurnMessage.id } : {}),
     ...projectPermission(permission),
     ...projectQuestion(question),
-    items: visible.map(projectMessage),
+    items: projectedItems,
+    turns: projectTurns(projectedItems, statusResult?.data?.[session.id]?.type === 'busy'),
+    context: {
+      providerID: lastAssistant?.metadata.providerID ?? session.model?.providerID,
+      modelID: lastAssistant?.metadata.modelID ?? session.model?.id,
+      agent: lastAssistant?.metadata.agent ?? session.agent,
+      variant: lastAssistant?.metadata.variant ?? session.model?.variant,
+      tokens: contextTokens,
+      cost: contextCost,
+      createdAt: safeTime(session.time.created),
+      updatedAt: safeTime(session.time.updated),
+      completedAt: lastAssistant?.metadata.completedAt,
+      freshness: lastAssistant ? 'current' : contextTokens ? 'estimated' : 'unavailable',
+    },
   }
 }
 
@@ -268,16 +292,12 @@ export async function loadSessionHistoryPage(
 }
 
 function projectMessage({ info, parts }: { info: Message; parts: Part[] }): SessionTimelineItem {
-  return {
-    id: info.id,
-    role: info.role,
-    createdAt: safeTime(info.time.created),
-    createdLabel: formatTime(info.time.created),
-    ...(info.role === 'assistant' && info.error
-      ? { error: bounded(errorLabel(info.error), 2_000) }
-      : {}),
-    parts: parts.flatMap((part) => projectPart(part)),
-  }
+  const projected = projectTimelineMessage(
+    info as unknown as Record<string, unknown>,
+    parts as unknown as Array<Record<string, unknown>>,
+  )
+  if (!projected) throw new Error('Invalid session message')
+  return projected
 }
 
 async function findLineageRequest<T extends { sessionID: string }>(
@@ -354,55 +374,6 @@ function projectQuestion(request: QuestionRequest | undefined) {
   }
 }
 
-function projectPart(part: Part): SessionSnapshot['items'][number]['parts'] {
-  if (part.type === 'text') {
-    const limited = part.text.length > 100_000
-    return part.ignored || part.synthetic
-      ? []
-      : [{ id: part.id, type: 'text', text: part.text.slice(0, 100_000), limited }]
-  }
-  if (part.type === 'tool') {
-    const input = boundedJson(part.state.input, 4_000)
-    return [
-      {
-        id: part.id,
-        type: 'tool',
-        name: bounded(part.tool, 200),
-        status: part.state.status,
-        ...('title' in part.state && part.state.title
-          ? { title: bounded(part.state.title, 500) }
-          : {}),
-        ...(input ? { input } : {}),
-        ...('output' in part.state && part.state.output
-          ? { output: part.state.output.slice(0, 16_000) }
-          : {}),
-        outputLimited: 'output' in part.state && part.state.output.length > 16_000,
-        ...('error' in part.state && part.state.error
-          ? { error: bounded(part.state.error, 4_000) }
-          : {}),
-      },
-    ]
-  }
-  const labels: Partial<Record<Part['type'], string>> = {
-    file: 'Attachment',
-    reasoning: 'Reasoning',
-    retry: 'Retrying response',
-    subtask: 'Subtask',
-    compaction: 'Conversation compacted',
-  }
-  const label = labels[part.type]
-  return label ? [{ id: part.id, type: 'status', label }] : []
-}
-
-function boundedJson(value: unknown, maximum: number) {
-  try {
-    const text = JSON.stringify(value, null, 2)
-    return text.length <= maximum ? text : `${text.slice(0, maximum)}...`
-  } catch {
-    return undefined
-  }
-}
-
 function bounded(value: string, maximum: number): string {
   return value.length <= maximum ? value : `${value.slice(0, maximum)}...`
 }
@@ -416,17 +387,6 @@ function formatTime(value: number): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(safeTime(value))
-}
-
-function errorLabel(error: object): string {
-  if (
-    'data' in error &&
-    error.data &&
-    typeof error.data === 'object' &&
-    'message' in error.data
-  )
-    return String(error.data.message)
-  return 'The assistant response failed.'
 }
 
 const maximumSnapshotBytes = 1024 * 1024

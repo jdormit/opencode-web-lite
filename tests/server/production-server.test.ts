@@ -104,9 +104,9 @@ describe('production Bun host', () => {
     expect(assetResponse.headers.get('content-type')).toContain('javascript')
 
     const compressedResponse = await fetch(`${origin}${assetPath}`, {
-      headers: { 'Accept-Encoding': 'gzip' },
+      headers: { 'Accept-Encoding': 'br' },
     })
-    expect(compressedResponse.headers.get('content-encoding')).toBe('gzip')
+    expect(compressedResponse.headers.get('content-encoding')).toBe('br')
     expect(compressedResponse.headers.get('vary')).toBe('Accept-Encoding')
 
     const identityResponse = await fetch(`${origin}${assetPath}`, {
@@ -131,6 +131,18 @@ describe('production Bun host', () => {
       headers: { 'If-None-Match': `"unrelated", ${etag ?? ''}` },
     })
     expect(cachedResponse.status).toBe(304)
+  })
+
+  test('reports health and readiness without configuration details', async () => {
+    for (const path of ['/healthz', '/readyz']) {
+      const response = await fetch(`${origin}${path}`, { headers: { 'X-Request-ID': 'release-test-id' } })
+      const text = await response.text()
+      expect(response.status).toBe(200)
+      expect(response.headers.get('x-request-id')).toBe('release-test-id')
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
+      expect(text).not.toContain(String(upstream.port))
+      expect(text).not.toContain('server-secret')
+    }
   })
 
   test('performs a real Bun WebSocket upgrade', async () => {
@@ -238,8 +250,38 @@ describe('production Bun host', () => {
   })
 })
 
+test('logs only request metadata and coarse route templates', async () => {
+  const lines: string[] = []
+  const original = console.log
+  console.log = (...values) => lines.push(values.map(String).join(' '))
+  const loggingServer = await startProductionServer({ port: 0, log: true })
+  try {
+    await fetch(`http://127.0.0.1:${loggingServer.port}/missing?token=do-not-log`, {
+      headers: { 'X-Request-ID': 'safe-request-id' },
+    })
+  } finally {
+    await loggingServer.stop(true)
+    console.log = original
+  }
+  const requestLog = lines.find((line) => line.includes('"event":"request"')) ?? ''
+  expect(requestLog).toContain('"requestId":"safe-request-id"')
+  expect(requestLog).toContain('"route":"/:route"')
+  expect(requestLog).not.toContain('do-not-log')
+  expect(requestLog).not.toContain('/missing')
+})
+
 test('refuses non-loopback binding', async () => {
   expect(
     startProductionServer({ hostname: '0.0.0.0', port: 0, log: false }),
   ).rejects.toThrow('Refusing to bind')
+})
+
+test('uses only an explicitly trusted public origin for proxy security decisions', async () => {
+  const publicServer = await startProductionServer({ port: 0, log: false, publicOrigin: 'https://app.example' })
+  try {
+    const response = await fetch(`http://127.0.0.1:${publicServer.port}/readyz`)
+    expect(response.headers.get('strict-transport-security')).toBe('max-age=31536000')
+    expect(startProductionServer({ port: 0, log: false, publicOrigin: 'https://app.example/path' }))
+      .rejects.toThrow('must be a valid HTTP origin')
+  } finally { await publicServer.stop(true) }
 })

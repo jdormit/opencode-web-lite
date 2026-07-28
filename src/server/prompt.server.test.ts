@@ -102,4 +102,45 @@ describe('prompt mutations', () => {
       ),
     ).rejects.toThrow('could not be verified')
   })
+
+  test('dispatches structured file, agent, and attachment parts after authoritative validation', async () => {
+    let parameters: unknown
+    await sendPrompt({
+      serverKey: 'server_test', sessionID: 'ses_1', messageID: 'msg_12345678901234567890123456',
+      mode: 'prompt', text: 'check @src/a.ts with @review', agent: 'build', providerID: 'provider', modelID: 'model', variant: '',
+      parts: [
+        { type: 'text', text: 'check @src/a.ts with @review' },
+        { type: 'project-file', path: 'src/a.ts', label: '@src/a.ts', start: 6, end: 15 },
+        { type: 'agent', name: 'review', label: '@review', start: 21, end: 28 },
+        { type: 'attachment', mime: 'text/plain', filename: 'notes.txt', url: 'data:text/plain;base64,aGk=', size: 2 },
+      ],
+    }, connection, { session: {
+      get: async () => ({ data: session }),
+      message: async () => ({ data: undefined, response: new Response(null, { status: 404 }) }),
+      promptAsync: async (input) => { parameters = input }, abort: async () => undefined,
+    } }, {
+      ...options,
+      mentionAgents: [{ name: 'review' }], commands: [], directory: '/work/a',
+      models: [{ ...options.models[0]!, capabilities: { image: false, pdf: false, reasoning: false, attachment: true } }],
+    })
+    expect((parameters as { parts: unknown[] }).parts).toEqual([
+      { type: 'text', text: 'check @src/a.ts with @review' },
+      { type: 'file', mime: 'text/plain', filename: 'a.ts', url: 'file:///work/a/src/a.ts', source: { type: 'file', path: '/work/a/src/a.ts', text: { value: '@src/a.ts', start: 6, end: 15 } } },
+      { type: 'agent', name: 'review', source: { value: '@review', start: 21, end: 28 } },
+      { type: 'file', mime: 'text/plain', filename: 'notes.txt', url: 'data:text/plain;base64,aGk=' },
+    ])
+  })
+
+  test('uses dedicated command and shell dispatch', async () => {
+    const calls: string[] = []
+    const client = { session: {
+      get: async () => ({ data: session }), message: async () => ({ data: undefined, response: new Response(null, { status: 404 }) }),
+      promptAsync: async () => undefined, abort: async () => undefined,
+      command: async () => { calls.push('command') }, shell: async () => { calls.push('shell') },
+    } }
+    const fullOptions = { ...options, mentionAgents: [], commands: [{ name: 'review', source: 'command' as const, hints: [] }], directory: '/work/a' }
+    await sendPrompt({ serverKey: 'server_test', sessionID: 'ses_1', messageID: 'msg_12345678901234567890123456', mode: 'command', command: 'review', text: '', agent: 'build', providerID: 'provider', modelID: 'model', variant: '', parts: [{ type: 'text', text: '' }] }, connection, client, fullOptions)
+    await sendPrompt({ serverKey: 'server_test', sessionID: 'ses_1', messageID: 'msg_22345678901234567890123456', mode: 'shell', text: 'pwd', agent: 'build', providerID: 'provider', modelID: 'model', variant: '', parts: [{ type: 'text', text: 'pwd' }] }, connection, client, fullOptions)
+    expect(calls).toEqual(['command', 'shell'])
+  })
 })

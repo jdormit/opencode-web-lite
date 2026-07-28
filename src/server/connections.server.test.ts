@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { createConnectionRegistry, getDefaultConnection, probeConnection } from './connections.server'
 
@@ -164,5 +167,82 @@ describe('probeConnection', () => {
 
     expect(snapshot.state).toBe('unavailable')
     expect(performance.now() - startedAt).toBeLessThan(250)
+  })
+})
+
+describe('persistent connection registry', () => {
+  test('health-checks before saving and reloads an encrypted multi-server registry', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'connections-'))
+    const path = join(directory, 'registry.json')
+    const env = { OPENCODE_WEB_ENCRYPTION_KEY: 'test-only-key', OPENCODE_WEB_CONNECTIONS_FILE: path }
+    try {
+      const registry = createConnectionRegistry(env)
+      const saved = await registry.save({ label: 'Remote', url: 'https://code.example', username: 'nova', password: 'secret' }, {
+        fetch: async () => Response.json({ healthy: true, version: '1.18.4' }),
+      })
+      expect(saved.server.key).toMatch(/^server_[A-Za-z0-9_-]+$/)
+      expect(JSON.stringify(saved)).not.toContain('secret')
+      registry.setDefault(saved.server.key)
+
+      const disk = readFileSync(path, 'utf8')
+      expect(disk).toContain('aes-256-gcm')
+      expect(disk).toContain('scrypt')
+      expect(disk).not.toContain('secret')
+      expect(disk).not.toContain('code.example')
+
+      const reloaded = createConnectionRegistry(env)
+      expect(reloaded.defaultKey).toBe(saved.server.key)
+      expect(reloaded.list()).toHaveLength(2)
+      expect(reloaded.resolve(saved.server.key).password).toBe('secret')
+      expect(() => reloaded.resolve(`${saved.server.key}x`)).toThrow('Unknown server')
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  test('loads a valid saved registry even when the fallback environment URL is invalid', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'connections-'))
+    const path = join(directory, 'registry.json')
+    const env = { OPENCODE_WEB_ENCRYPTION_KEY: 'test-only-key', OPENCODE_WEB_CONNECTIONS_FILE: path }
+    try {
+      const registry = createConnectionRegistry(env)
+      await registry.save({ label: 'Remote', url: 'https://code.example' }, {
+        fetch: async () => Response.json({ healthy: true, version: '1.18.4' }),
+      })
+      const reloaded = createConnectionRegistry({ ...env, OPENCODE_SERVER_URL: 'not a URL' })
+      expect(reloaded.list()).toHaveLength(2)
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  test('fails closed instead of overwriting an unreadable saved registry', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'connections-'))
+    const path = join(directory, 'registry.json')
+    try {
+      const registry = createConnectionRegistry({ OPENCODE_WEB_ENCRYPTION_KEY: 'right-key', OPENCODE_WEB_CONNECTIONS_FILE: path })
+      registry.setDefault(registry.defaultKey)
+      expect(() => createConnectionRegistry({ OPENCODE_WEB_ENCRYPTION_KEY: 'wrong-key', OPENCODE_WEB_CONNECTIONS_FILE: path }))
+        .toThrow('could not be decrypted or validated')
+      writeFileSync(path, '{broken')
+      expect(() => createConnectionRegistry({ OPENCODE_WEB_ENCRYPTION_KEY: 'right-key', OPENCODE_WEB_CONNECTIONS_FILE: path }))
+        .toThrow('could not be decrypted or validated')
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  test('does not write credentials without an encryption key and rejects duplicate origins', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'connections-'))
+    const path = join(directory, 'registry.json')
+    try {
+      const registry = createConnectionRegistry({ OPENCODE_WEB_CONNECTIONS_FILE: path })
+      await expect(registry.save({ label: 'Duplicate', url: 'http://localhost:4096' }, {
+        fetch: async () => Response.json({ healthy: true, version: '1.18.4' }),
+      })).rejects.toThrow('already saved')
+      expect(Bun.file(path).size).toBe(0)
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  test('does not retain a server when its health check fails', async () => {
+    const registry = createConnectionRegistry({})
+    await expect(registry.save({ label: 'Offline', url: 'https://offline.example' }, {
+      fetch: async () => new Response(null, { status: 503 }),
+    })).rejects.toThrow('health check failed')
+    expect(registry.list()).toHaveLength(1)
   })
 })

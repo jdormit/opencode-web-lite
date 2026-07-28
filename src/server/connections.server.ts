@@ -1,11 +1,14 @@
 import { createOpencodeClient } from '@opencode-ai/sdk/v2/client'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import type {
   ConnectionSnapshot,
+  ConnectionInput,
+  ConnectionRegistrySnapshot,
   PublicServerConnection,
 } from '~/lib/connection'
 import { finiteOpenCodeFetch } from './bounded-fetch.server'
+import { connectionStorePath, readConnectionStore, writeConnectionStore } from './connection-persistence.server'
 
 export type ServerConnection = PublicServerConnection & {
   username?: string
@@ -13,9 +16,13 @@ export type ServerConnection = PublicServerConnection & {
 }
 
 export type ConnectionRegistry = Readonly<{
-  defaultKey: string
+  readonly defaultKey: string
+  readonly persistent: boolean
   list(): ServerConnection[]
   resolve(serverKey: string): ServerConnection
+  save(input: ConnectionInput, options?: ProbeOptions): Promise<ConnectionSnapshot>
+  remove(serverKey: string): void
+  setDefault(serverKey: string): void
 }>
 
 type ProbeOptions = Readonly<{
@@ -57,19 +64,77 @@ export function getDefaultConnection(
 export function createConnectionRegistry(
   env: Record<string, string | undefined> = process.env,
 ): ConnectionRegistry {
-  const connection = getDefaultConnection(env)
+  const encryptionKey = env.OPENCODE_WEB_ENCRYPTION_KEY
+  const path = connectionStorePath(env)
+  const storedResult = readConnectionStore(encryptionKey, path)
+  if (storedResult.status === 'unreadable') throw new Error('Saved OpenCode connections could not be decrypted or validated')
+  const stored = storedResult.status === 'valid' ? storedResult.store : undefined
+  const fallback = stored ? undefined : getDefaultConnection(env)
+  let defaultKey = stored?.defaultKey ?? fallback!.key
+  let connections = stored?.connections ?? [fallback!]
+  const persist = () => writeConnectionStore(
+    { version: 1, defaultKey, connections },
+    encryptionKey,
+    path,
+  )
   return {
-    defaultKey: connection.key,
-    list: () => [connection],
+    get defaultKey() { return defaultKey },
+    persistent: Boolean(encryptionKey),
+    list: () => connections.map((connection) => ({ ...connection })),
     resolve: (serverKey) => {
-      if (serverKey !== connection.key) throw new Error('Unknown server')
-      return connection
+      const connection = connections.find((candidate) => candidate.key === serverKey)
+      if (!connection) throw new Error('Unknown server')
+      return { ...connection }
+    },
+    async save(input, options) {
+      const existing = input.key ? connections.find((candidate) => candidate.key === input.key) : undefined
+      if (input.key && !existing) throw new Error('Unknown server')
+      const url = normalizeServerUrl(input.url)
+      const duplicate = connections.find((candidate) => candidate.url === url && candidate.key !== input.key)
+      if (duplicate) throw new Error('That server is already saved')
+      const parsed = new URL(url)
+      const password = input.clearCredentials ? undefined : input.password ?? existing?.password
+      const username = input.clearCredentials ? undefined : input.username?.trim() || existing?.username
+      if (password !== undefined && parsed.protocol === 'http:' && !isLoopback(parsed.hostname)) {
+        throw new Error('OpenCode credentials require HTTPS for non-loopback servers')
+      }
+      const connection: ServerConnection = {
+        key: existing?.key ?? createOpaqueServerKey(),
+        label: input.label.trim() || parsed.hostname,
+        url,
+        ...(password !== undefined ? { password, username: username || 'opencode' } : {}),
+      }
+      const snapshot = await probeConnection(connection, options)
+      if (snapshot.state !== 'connected') throw new Error(`Server health check failed: ${snapshot.state}`)
+      connections = existing
+        ? connections.map((candidate) => candidate.key === existing.key ? connection : candidate)
+        : [...connections, connection]
+      persist()
+      return snapshot
+    },
+    remove(serverKey) {
+      if (!connections.some((candidate) => candidate.key === serverKey)) throw new Error('Unknown server')
+      if (connections.length === 1) throw new Error('At least one server is required')
+      connections = connections.filter((candidate) => candidate.key !== serverKey)
+      if (defaultKey === serverKey) defaultKey = connections[0]!.key
+      persist()
+    },
+    setDefault(serverKey) {
+      if (!connections.some((candidate) => candidate.key === serverKey)) throw new Error('Unknown server')
+      defaultKey = serverKey
+      persist()
     },
   }
 }
 
+let registry: ConnectionRegistry | undefined
+
+export function getConnectionRegistry() {
+  return registry ??= createConnectionRegistry()
+}
+
 export function resolveConnection(serverKey: string): ServerConnection {
-  return createConnectionRegistry().resolve(serverKey)
+  return getConnectionRegistry().resolve(serverKey)
 }
 
 export function createSdkForConnection(
@@ -92,7 +157,8 @@ export function createSdkForConnection(
 export function getDefaultConnectionSnapshot(): Promise<ConnectionSnapshot> {
   let connection: ServerConnection
   try {
-    connection = getDefaultConnection()
+    const current = getConnectionRegistry()
+    connection = current.resolve(current.defaultKey)
   } catch {
     return Promise.resolve({
       server: { key: 'invalid', label: 'Invalid configuration', url: '' },
@@ -116,6 +182,28 @@ export function getDefaultConnectionSnapshot(): Promise<ConnectionSnapshot> {
     promise,
   }
   return promise
+}
+
+export async function getConnectionRegistrySnapshot(): Promise<ConnectionRegistrySnapshot> {
+  const current = getConnectionRegistry()
+  const servers = await Promise.all(current.list().map((connection) => probeConnection(connection)))
+  return { defaultKey: current.defaultKey, servers, persistent: current.persistent }
+}
+
+export async function saveConnection(input: ConnectionInput) {
+  const result = await getConnectionRegistry().save(input)
+  snapshotCache = undefined
+  return result
+}
+
+export function removeConnection(serverKey: string) {
+  getConnectionRegistry().remove(serverKey)
+  snapshotCache = undefined
+}
+
+export function selectDefaultConnection(serverKey: string) {
+  getConnectionRegistry().setDefault(serverKey)
+  snapshotCache = undefined
 }
 
 export async function probeConnection(
@@ -182,7 +270,7 @@ export async function probeConnection(
   }
 }
 
-function normalizeServerUrl(value: string): string {
+export function normalizeServerUrl(value: string): string {
   let url: URL
   try {
     url = new URL(value)
@@ -203,12 +291,16 @@ function normalizeServerUrl(value: string): string {
   return url.origin
 }
 
-function isLoopback(hostname: string): boolean {
+export function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
 function createServerKey(url: string): string {
   return `server_${createHash('sha256').update(url).digest('hex').slice(0, 16)}`
+}
+
+function createOpaqueServerKey(): string {
+  return `server_${randomBytes(16).toString('base64url')}`
 }
 
 function authorizationHeaders(connection: ServerConnection) {

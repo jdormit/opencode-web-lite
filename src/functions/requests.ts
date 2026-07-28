@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { rejectQuestion, replyPermission, replyQuestion } from '~/server/requests.server'
+import { assertSameOriginRequest } from '~/server/request-security.server'
 
 export const replyPermissionMutation = createServerFn({ method: 'POST' })
   .validator((data: unknown) => {
@@ -16,7 +17,7 @@ export const replyPermissionMutation = createServerFn({ method: 'POST' })
       reply,
     }
   })
-  .handler(({ data }) => replyPermission(data))
+  .handler(({ data }) => { assertSameOriginRequest(); return replyPermission(data) })
 
 export const replyQuestionMutation = createServerFn({ method: 'POST' })
   .validator((data: unknown) => {
@@ -35,7 +36,7 @@ export const replyQuestionMutation = createServerFn({ method: 'POST' })
       answers,
     }
   })
-  .handler(({ data }) => replyQuestion(data))
+  .handler(({ data }) => { assertSameOriginRequest(); return replyQuestion(data) })
 
 export const rejectQuestionMutation = createServerFn({ method: 'POST' })
   .validator((data: unknown) => {
@@ -46,7 +47,7 @@ export const rejectQuestionMutation = createServerFn({ method: 'POST' })
       requestID: text(value, 'requestID'),
     }
   })
-  .handler(({ data }) => rejectQuestion(data))
+  .handler(({ data }) => { assertSameOriginRequest(); return rejectQuestion(data) })
 
 function record(data: unknown): Record<string, unknown> {
   if (typeof data !== 'object' || data === null) throw new Error('Invalid request')

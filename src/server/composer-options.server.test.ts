@@ -54,8 +54,13 @@ describe('loadComposerOptions', () => {
         modelID: 'current',
         name: 'Current',
         variants: ['fast'],
+        capabilities: { image: false, pdf: false, reasoning: false, attachment: false },
+        status: 'active',
       },
     ])
+    expect(options.mentionAgents).toEqual([{ name: 'helper' }, { name: 'review' }])
+    expect(options.commands).toEqual([])
+    expect(options.directory).toBe('/work/sandbox')
     expect(options.defaultModel).toEqual({ providerID: 'provider', modelID: 'current' })
   })
 })

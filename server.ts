@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { brotliCompressSync } from 'node:zlib'
 
 import { resolveConnection } from './src/server/connections.server'
 
@@ -14,6 +15,8 @@ type HostOptions = Readonly<{
   serverEntryPoint?: string
   enableWebSocketProbe?: boolean
   log?: boolean
+  installSignalHandlers?: boolean
+  publicOrigin?: string
 }>
 
 type SocketData =
@@ -32,6 +35,7 @@ type SocketData =
 type Asset = {
   file: Bun.BunFile
   gzip?: Uint8Array
+  brotli?: Uint8Array
 }
 
 const defaultClientDirectory = './dist/client'
@@ -42,6 +46,7 @@ const globalEventPath = /^\/api\/opencode\/server\/[A-Za-z0-9_-]{1,128}\/global\
 const maximumPendingPtyBytes = 64 * 1024
 const maximumPtyFrameBytes = 64 * 1024
 const maximumPtyBackpressureBytes = 1024 * 1024
+const shutdownDrainMs = 5_000
 
 export async function startProductionServer(options: HostOptions = {}) {
   const hostname = options.hostname ?? '127.0.0.1'
@@ -54,14 +59,31 @@ export async function startProductionServer(options: HostOptions = {}) {
   )
   const handler = await loadStartHandler(serverEntryPoint)
   const assets = await indexAssets(clientDirectory)
+  const publicOrigin = normalizePublicOrigin(options.publicOrigin ?? process.env.OPENCODE_WEB_PUBLIC_ORIGIN)
+  let ready = true
 
   const server = Bun.serve<SocketData>({
     hostname,
     port,
     async fetch(request, bunServer) {
+      const startedAt = performance.now()
+      const requestId = requestID(request.headers.get('x-request-id'))
       const url = new URL(request.url)
+      let response: Response | undefined
+      let category = 'ok'
+      const finish = (value: Response | undefined, overrideCategory?: string) => {
+        if (!value) return value
+        response = withHostHeaders(value, requestId, publicOrigin?.startsWith('https:') ?? url.protocol === 'https:')
+        category = overrideCategory ?? failureCategory(response.status)
+        if (options.log !== false) logRequest(request, response, requestId, startedAt, category)
+        return response
+      }
       if (!hasExpectedAuthority(url, hostname, bunServer.port)) {
-        return new Response('Misdirected request', { status: 421 })
+        return finish(new Response('Misdirected request', { status: 421 }), 'invalid-authority')
+      }
+      if (url.pathname === '/healthz') return finish(Response.json({ status: 'ok' }, { headers: { 'Cache-Control': 'no-store' } }))
+      if (url.pathname === '/readyz') {
+        return finish(Response.json({ status: ready ? 'ready' : 'stopping' }, { status: ready ? 200 : 503, headers: { 'Cache-Control': 'no-store' } }))
       }
       if (globalEventPath.test(url.pathname) || ptyConnectPath.test(url.pathname)) {
         bunServer.timeout(request, 0)
@@ -72,30 +94,34 @@ export async function startProductionServer(options: HostOptions = {}) {
         url.pathname === websocketProbePath
       ) {
         if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-          return new Response('WebSocket upgrade required', { status: 426 })
+          return finish(new Response('WebSocket upgrade required', { status: 426 }))
         }
 
         return bunServer.upgrade(request, {
           data: { kind: 'upgrade-probe' },
         })
           ? undefined
-          : new Response('WebSocket upgrade failed', { status: 400 })
+          : finish(new Response('WebSocket upgrade failed', { status: 400 }))
       }
 
       if (ptyConnectPath.test(url.pathname)) {
-        const upgrade = preparePtyUpgrade(request)
-        if (upgrade instanceof Response) return upgrade
+        const upgrade = preparePtyUpgrade(request, publicOrigin)
+        if (upgrade instanceof Response) return finish(upgrade)
         return bunServer.upgrade(request, { data: upgrade })
           ? undefined
-          : new Response('WebSocket upgrade failed', { status: 400 })
+          : finish(new Response('WebSocket upgrade failed', { status: 400 }))
       }
 
       const asset = assets.get(url.pathname)
       if (asset && (request.method === 'GET' || request.method === 'HEAD')) {
-        return serveAsset(request, asset)
+        return finish(serveAsset(request, asset))
       }
 
-      return handler.fetch(request)
+      try {
+        return finish(await handler.fetch(publicOrigin ? withPublicOrigin(request, publicOrigin) : request))
+      } catch {
+        return finish(new Response('Internal server error', { status: 500 }), 'internal')
+      }
     },
     websocket: {
       open(socket) {
@@ -141,15 +167,32 @@ export async function startProductionServer(options: HostOptions = {}) {
     console.log(`OpenCode Web Lite listening on http://${hostname}:${server.port}`)
   }
 
+  const shutdown = async (signal: string) => {
+    if (!ready) return
+    ready = false
+    if (options.log !== false) console.log(JSON.stringify({ event: 'shutdown', signal }))
+    const forceTimer = setTimeout(() => void server.stop(true), shutdownDrainMs + 10_000)
+    try {
+      await Bun.sleep(shutdownDrainMs)
+      await server.stop(false)
+    } finally {
+      clearTimeout(forceTimer)
+    }
+  }
+  if (options.installSignalHandlers === true) {
+    process.once('SIGTERM', () => void shutdown('SIGTERM'))
+    process.once('SIGINT', () => void shutdown('SIGINT'))
+  }
+
   return server
 }
 
-function preparePtyUpgrade(request: Request): Extract<SocketData, { kind: 'pty-proxy' }> | Response {
+function preparePtyUpgrade(request: Request, publicOrigin?: string): Extract<SocketData, { kind: 'pty-proxy' }> | Response {
   if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
     return new Response('WebSocket upgrade required', { status: 426 })
   }
   const requestUrl = new URL(request.url)
-  if (request.headers.get('origin') !== requestUrl.origin) {
+  if (request.headers.get('origin') !== (publicOrigin ?? requestUrl.origin)) {
     return new Response('Cross-origin WebSocket rejected', { status: 403 })
   }
   const match = requestUrl.pathname.match(ptyConnectPath)
@@ -196,6 +239,24 @@ function preparePtyUpgrade(request: Request): Extract<SocketData, { kind: 'pty-p
     pending: [],
     pendingBytes: 0,
   }
+}
+
+function normalizePublicOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  let url: URL
+  try { url = new URL(value) } catch { throw new Error('OPENCODE_WEB_PUBLIC_ORIGIN must be a valid HTTP origin') }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin !== value || url.username || url.password) {
+    throw new Error('OPENCODE_WEB_PUBLIC_ORIGIN must be a valid HTTP origin')
+  }
+  return url.origin
+}
+
+function withPublicOrigin(request: Request, publicOrigin: string): Request {
+  const target = new URL(request.url)
+  const origin = new URL(publicOrigin)
+  target.protocol = origin.protocol
+  target.host = origin.host
+  return new Request(target, request)
 }
 
 function connectUpstreamPty(socket: Bun.ServerWebSocket<SocketData>) {
@@ -293,16 +354,20 @@ async function indexAssets(directory: string): Promise<Map<string, Asset>> {
 
     const route = `/${relativePath.replaceAll('\\', '/')}`
     const file = Bun.file(resolve(directory, relativePath))
-    const gzip = await compressAsset(file)
-    assets.set(route, gzip ? { file, gzip } : { file })
+    const compressed = await compressAsset(file)
+    assets.set(route, { file, ...compressed })
   }
 
   return assets
 }
 
-async function compressAsset(file: Bun.BunFile): Promise<Uint8Array | undefined> {
-  if (file.size < 1_024 || !isCompressible(file.type)) return undefined
-  return Bun.gzipSync(await file.arrayBuffer())
+async function compressAsset(file: Bun.BunFile): Promise<Pick<Asset, 'gzip' | 'brotli'>> {
+  if (file.size < 1_024 || !isCompressible(file.type)) return {}
+  const bytes = await file.arrayBuffer()
+  return {
+    gzip: Bun.gzipSync(bytes),
+    brotli: brotliCompressSync(bytes),
+  }
 }
 
 function isCompressible(type: string): boolean {
@@ -316,11 +381,13 @@ function isCompressible(type: string): boolean {
 
 function serveAsset(request: Request, asset: Asset): Response {
   const { file } = asset
-  const gzip = asset.gzip
-  const usesGzip = gzip !== undefined && acceptsEncoding(request.headers, 'gzip')
-  const body = usesGzip ? (new Uint8Array(gzip).buffer as ArrayBuffer) : file
-  const bodySize = usesGzip ? gzip.byteLength : file.size
-  const variant = usesGzip ? 'gzip' : 'identity'
+  const encoding = asset.brotli && acceptsEncoding(request.headers, 'br')
+    ? 'br'
+    : asset.gzip && acceptsEncoding(request.headers, 'gzip') ? 'gzip' : undefined
+  const compressed = encoding === 'br' ? asset.brotli : encoding === 'gzip' ? asset.gzip : undefined
+  const body = compressed ? (new Uint8Array(compressed).buffer as ArrayBuffer) : file
+  const bodySize = compressed?.byteLength ?? file.size
+  const variant = encoding ?? 'identity'
   const etag = `W/\"${file.size.toString(16)}-${file.lastModified.toString(16)}-${variant}\"`
   const headers = new Headers({
     'Cache-Control': request.url.includes('/assets/')
@@ -332,7 +399,7 @@ function serveAsset(request: Request, asset: Asset): Response {
     'X-Content-Type-Options': 'nosniff',
   })
   if (asset.gzip) headers.set('Vary', 'Accept-Encoding')
-  if (usesGzip) headers.set('Content-Encoding', 'gzip')
+  if (encoding) headers.set('Content-Encoding', encoding)
 
   if (matchesEtag(request.headers.get('if-none-match'), etag)) {
     headers.delete('Content-Length')
@@ -340,6 +407,58 @@ function serveAsset(request: Request, asset: Asset): Response {
   }
 
   return new Response(request.method === 'HEAD' ? null : body, { headers })
+}
+
+function requestID(candidate: string | null): string {
+  return candidate && /^[A-Za-z0-9_-]{8,128}$/.test(candidate)
+    ? candidate
+    : crypto.randomUUID()
+}
+
+function withHostHeaders(response: Response, requestId: string, secure: boolean): Response {
+  const headers = new Headers(response.headers)
+  headers.set('X-Request-ID', requestId)
+  headers.set('X-Content-Type-Options', 'nosniff')
+  headers.set('Referrer-Policy', 'no-referrer')
+  headers.set('Permissions-Policy', 'camera=(), geolocation=(), microphone=()')
+  headers.set('X-Frame-Options', 'DENY')
+  if (!headers.has('Content-Security-Policy')) {
+    headers.set('Content-Security-Policy', "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'")
+  }
+  if (secure) headers.set('Strict-Transport-Security', 'max-age=31536000')
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+function routeTemplate(request: Request): string {
+  const path = new URL(request.url).pathname
+  if (path === '/healthz' || path === '/readyz') return path
+  if (path.startsWith('/assets/')) return '/assets/:asset'
+  if (globalEventPath.test(path)) return '/api/opencode/server/:serverKey/global/event'
+  if (ptyConnectPath.test(path)) return '/api/opencode/server/:serverKey/pty/:ptyId/connect'
+  if (path.startsWith('/api/opencode/server/')) return '/api/opencode/server/:serverKey/:operation'
+  if (/^\/server\/[^/]+\/session\/[^/]+$/.test(path)) return '/server/:serverKey/session/:sessionId'
+  return ['/', '/new', '/settings'].includes(path) ? path : '/:route'
+}
+
+function failureCategory(status: number): string {
+  if (status < 400) return 'ok'
+  if (status === 401 || status === 403) return 'denied'
+  if (status === 404) return 'not-found'
+  if (status === 408 || status === 504) return 'timeout'
+  if (status >= 500) return 'upstream-or-internal'
+  return 'invalid-request'
+}
+
+function logRequest(request: Request, response: Response, id: string, startedAt: number, category: string) {
+  console.log(JSON.stringify({
+    event: 'request',
+    requestId: id,
+    method: request.method,
+    route: routeTemplate(request),
+    status: response.status,
+    durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+    category,
+  }))
 }
 
 function acceptsEncoding(headers: Headers, encoding: string): boolean {
@@ -373,5 +492,5 @@ function matchesEtag(header: string | null, etag: string): boolean {
 }
 
 if (import.meta.main) {
-  await startProductionServer()
+  await startProductionServer({ installSignalHandlers: true })
 }

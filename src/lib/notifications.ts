@@ -1,5 +1,6 @@
 import type { NormalizedGlobalEvent } from './live-store'
 import { BoundedLru } from './bounded-lru'
+import { writePersistentValue } from './persistence'
 
 export type NotificationKind = 'completion' | 'request' | 'error'
 export type SessionNotification = {
@@ -154,12 +155,12 @@ export class NotificationStore {
   }
 
   private commit() {
-    try { localStorage.setItem(entriesKey(this.serverKey), JSON.stringify(this.entries)) } catch {}
+    writePersistentValue(localStorage, entriesKey(this.serverKey), JSON.stringify(this.entries), 'notification')
     this.publish()
   }
 
   private persistPreferences() {
-    try { localStorage.setItem(preferencesKey(this.serverKey), JSON.stringify(this.preferences)) } catch {}
+    writePersistentValue(localStorage, preferencesKey(this.serverKey), JSON.stringify(this.preferences), 'preference')
   }
 
   private publish() {

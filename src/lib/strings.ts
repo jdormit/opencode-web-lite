@@ -48,6 +48,7 @@ export const strings = {
     notFoundDescription: 'The address may be incomplete or no longer valid.',
     reload: 'Reload page',
     returnHome: 'Return home',
+    copyDetails: 'Copy details',
   },
   theme: {
     label: 'Color scheme',

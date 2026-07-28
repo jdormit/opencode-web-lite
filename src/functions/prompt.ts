@@ -1,6 +1,8 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { sendPrompt, stopSession } from '~/server/prompt.server'
+import { parsePromptMutation } from '~/lib/composer-prompt'
+import { assertSameOriginRequest } from '~/server/request-security.server'
 
 function strings(data: unknown, names: string[]) {
   if (typeof data !== 'object' || data === null) throw new Error('Invalid input')
@@ -14,9 +16,9 @@ function strings(data: unknown, names: string[]) {
 }
 
 export const sendPromptMutation = createServerFn({ method: 'POST' })
-  .validator((data: unknown) => strings(data, ['serverKey', 'sessionID', 'messageID', 'text', 'agent', 'providerID', 'modelID', 'variant']) as Parameters<typeof sendPrompt>[0])
-  .handler(({ data }) => sendPrompt(data))
+  .validator(parsePromptMutation)
+  .handler(({ data }) => { assertSameOriginRequest(); return sendPrompt(data) })
 
 export const stopSessionMutation = createServerFn({ method: 'POST' })
   .validator((data: unknown) => strings(data, ['serverKey', 'sessionID']) as Parameters<typeof stopSession>[0])
-  .handler(({ data }) => stopSession(data))
+  .handler(({ data }) => { assertSameOriginRequest(); return stopSession(data) })

@@ -158,7 +158,16 @@ export class LiveStore {
       const sessionId = eventSessionId(event)
       if (sessionId) {
         const journal = [...(this.sessionJournal.get(sessionId) ?? [])]
-        journal.push(event)
+        const previousJournalEvent = journal.at(-1)
+        if (previousJournalEvent && sameDeltaTarget(previousJournalEvent, event)) {
+          journal[journal.length - 1] = {
+            ...event,
+            properties: {
+              ...event.properties,
+              delta: `${String(previousJournalEvent.properties.delta)}${String(event.properties.delta)}`,
+            },
+          }
+        } else journal.push(event)
         let bytes = journal.reduce((total, item) => total + eventSize(item), 0)
         while (journal.length > 500 || bytes > 1024 * 1024) {
           const removed = journal.shift()

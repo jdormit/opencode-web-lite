@@ -30,7 +30,7 @@ export default createServerEntry({
           "frame-ancestors 'none'",
           "img-src 'self' data:",
           `script-src 'self' 'nonce-${nonce}'`,
-          "style-src 'self'",
+          "style-src 'self' 'unsafe-inline'",
         ].join('; '),
       )
     }
