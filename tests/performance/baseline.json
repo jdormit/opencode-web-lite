@@ -1,0 +1,10 @@
+{
+  "ttfb": 727,
+  "fcp": 1636,
+  "lcp": 2272,
+  "cls": 0.09,
+  "interaction": 181,
+  "frameGapP95": 45,
+  "longTaskMax": 90,
+  "longTaskP95": 45
+}

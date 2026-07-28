@@ -7,13 +7,24 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',
   },
-  webServer: {
-    command: 'bun run dev',
-    url: 'http://127.0.0.1:3000',
-    reuseExistingServer: !process.env.CI,
-  },
+  workers: 1,
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'pixel', use: { ...devices['Pixel 7'] } },
+    { name: 'iphone', use: { ...devices['iPhone 15'] } },
+  ],
+  webServer: [
+    {
+      command: 'bun tests/fixtures/mock-opencode.ts',
+      url: 'http://127.0.0.1:4097/global/health',
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: 'bun run build && OPENCODE_SERVER_URL=http://127.0.0.1:4097 bun run start',
+      url: 'http://127.0.0.1:3000/readyz',
+      reuseExistingServer: !process.env.CI,
+    },
   ],
 })

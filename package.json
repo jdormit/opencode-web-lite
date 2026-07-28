@@ -8,10 +8,12 @@
     "start": "NODE_ENV=production bun run server.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src",
+    "test": "bun test src tests/fixtures",
     "test:server": "bun run build && bun test tests/server",
     "test:browser": "playwright test",
-    "check": "bun run typecheck && bun run test && bun run build && bun test tests/server"
+    "test:performance": "bun run build && playwright test -c playwright.performance.config.ts",
+    "bundle:report": "bun scripts/bundle-budget.ts",
+    "check": "bun run typecheck && bun run test && bun run build && bun run bundle:report && bun test tests/server && bun run test:browser"
   },
   "dependencies": {
     "@opencode-ai/sdk": "1.18.4",
