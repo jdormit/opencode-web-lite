@@ -42,7 +42,7 @@ location / {
 }
 ```
 
-Preserve streaming responses instead of compressing or collecting them at the proxy. Allow long read timeouts for `/api/opencode/server/*/global/event` and terminal WebSockets. Keep ordinary request body limits conservative. Send the Bun listener authority in `Host`; configure the exact browser-facing authority through `OPENCODE_WEB_PUBLIC_ORIGIN`, and preserve the browser's `Origin` header. Bun rejects other direct authorities.
+Preserve streaming responses instead of compressing or collecting them at the proxy. Allow long read timeouts for `/api/opencode/server/*/global/event` and terminal WebSockets. Keep ordinary request body limits conservative. Configure the exact browser-facing authority through `OPENCODE_WEB_PUBLIC_ORIGIN`, and preserve the browser's `Origin` header. The proxy may send either the Bun listener authority or that configured public authority in `Host`; Bun rejects every other authority.
 
 ## Logs
 

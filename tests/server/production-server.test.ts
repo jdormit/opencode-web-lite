@@ -281,6 +281,14 @@ test('uses only an explicitly trusted public origin for proxy security decisions
   try {
     const response = await fetch(`http://127.0.0.1:${publicServer.port}/readyz`)
     expect(response.headers.get('strict-transport-security')).toBe('max-age=31536000')
+    const publicAuthorityResponse = await fetch(`http://127.0.0.1:${publicServer.port}/readyz`, {
+      headers: { Host: 'app.example' },
+    })
+    expect(publicAuthorityResponse.status).toBe(200)
+    const unexpectedAuthorityResponse = await fetch(`http://127.0.0.1:${publicServer.port}/readyz`, {
+      headers: { Host: 'attacker.example' },
+    })
+    expect(unexpectedAuthorityResponse.status).toBe(421)
     expect(startProductionServer({ port: 0, log: false, publicOrigin: 'https://app.example/path' }))
       .rejects.toThrow('must be a valid HTTP origin')
   } finally { await publicServer.stop(true) }

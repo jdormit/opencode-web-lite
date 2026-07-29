@@ -78,7 +78,7 @@ export async function startProductionServer(options: HostOptions = {}) {
         if (options.log !== false) logRequest(request, response, requestId, startedAt, category)
         return response
       }
-      if (!hasExpectedAuthority(url, hostname, bunServer.port)) {
+      if (!hasExpectedAuthority(url, hostname, bunServer.port, publicOrigin)) {
         return finish(new Response('Misdirected request', { status: 421 }), 'invalid-authority')
       }
       if (url.pathname === '/healthz') return finish(Response.json({ status: 'ok' }, { headers: { 'Cache-Control': 'no-store' } }))
@@ -315,8 +315,10 @@ function hasExpectedAuthority(
   url: URL,
   hostname: string,
   port: number | undefined,
+  publicOrigin?: string,
 ): boolean {
   if (port === undefined) return false
+  if (publicOrigin && url.host === new URL(publicOrigin).host) return true
   const expectedHostname = hostname === '::1' ? '[::1]' : hostname
   const expectedPort = String(port)
   const requestPort =

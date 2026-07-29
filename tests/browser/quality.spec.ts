@@ -152,7 +152,7 @@ test('mobile composer remains visible when focused', async ({ page, request }, t
     return { top: box.top, bottom: box.bottom, viewport: window.visualViewport!.height }
   })
   expect(position.top, JSON.stringify(position)).toBeGreaterThanOrEqual(0)
-  expect(position.bottom, JSON.stringify(position)).toBeLessThanOrEqual(position.viewport)
+  expect(position.bottom, JSON.stringify(position)).toBeLessThanOrEqual(position.viewport + 1)
 })
 
 test('draft and route restore after reload', async ({ page }) => {

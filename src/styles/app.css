@@ -86,7 +86,7 @@ button:focus-visible, a:focus-visible, select:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
-.wordmark { min-height: 44px; display: flex; align-items: center; gap: 0.35rem; width: fit-content; font-weight: 760; text-decoration: none; }
+.wordmark { min-width: 0; max-width: 100%; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; width: fit-content; font-weight: 760; text-decoration: none; }
 .wordmark-mark { color: var(--accent); font-family: ui-monospace, monospace; }
 .wordmark-lite { color: var(--muted); font-weight: 450; }
 
@@ -434,7 +434,7 @@ dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
 
 @media (max-width: 480px) {
   .route-bar { grid-template-columns: minmax(0, 1fr); }
-  .route-bar nav { grid-column: 1; grid-row: auto; display: grid; grid-template-columns: minmax(0, 1fr); }
+  .route-bar nav { min-width: 0; grid-column: 1; grid-row: auto; display: grid; grid-template-columns: minmax(0, 1fr); }
   .route-bar nav a { min-width: 0; overflow-wrap: anywhere; }
   .wordmark, .theme-picker, .live-status { min-width: 0; max-width: 100%; }
   .workspace-shell, .session-shell, .centered-state { padding-right: max(1rem, env(safe-area-inset-right)); padding-left: max(1rem, env(safe-area-inset-left)); }
